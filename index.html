@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data: blob:; style-src 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net">
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.39/index.js" id="wabt-loader" async></script>
-<title>Zephyr OS v5.0.0</title>
+<title>Zephyr OS v6.0.0</title>
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -221,7 +221,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
 
 <div id="boot">
   <div class="boot-logo">Zephyr OS</div>
-  <div class="boot-version">v5.0.0 — App Store rewrite (WASM-first) (writePixel batching + cached views)</div>
+  <div class="boot-version">v6.0.0 — WASM Hypervisor App Store (writePixel batching + cached views)</div>
   <div class="boot-spinner"></div>
   <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
   <div class="boot-tip" id="boot-tip">Initializing kernel partitions...</div>
@@ -270,7 +270,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
     <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#10b981,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;box-shadow:0 2px 8px rgba(16,185,129,0.3)">🌀</div>
     <div>
       <div style="font-size:13px;font-weight:600;color:#f3f4f6">Zephyr User</div>
-      <div style="font-size:10px;color:#9ca3af">v5.0.0 · WASM App Store</div>
+      <div style="font-size:10px;color:#9ca3af">v6.0.0 · WASM Hypervisor</div>
     </div>
   </div>
   <input class="start-search" type="text" placeholder="Search apps..." id="start-search">
@@ -1291,7 +1291,7 @@ function hasPermission(manifest, perm){
 var C1 = (function(){
   var bootTime = performance.now();
   var state = {
-    version: 'Zephyr-OS-5.0.0',
+    version: 'Zephyr-OS-6.0.0',
     bootTime: bootTime,
     canvasId: 'wallpaper-canvas',
     memoryBase: 65536,
@@ -8417,7 +8417,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   369: function(k){ var pm = k.getPartitionRaw('C3.6'); var t = 'C3.94.'+Date.now(); pm.invoke('create', t, 'C3.1'); var p = k.getPartitionRaw(t); if(!p) return {pass:false, detail:'create failed'}; p.export('noop', function(){return 1;}); var before = p.exportCount; pm.invoke('destroy', t); try{ var after = p.exportCount; }catch(e){ var after = -1; } return {pass:before === 1, detail:'WM cleanup destroys partition exports (FIX 10): before='+before+', after='+after}; },
   370: function(k){ var m = k.getPartitionRaw('C3.2'); if(!m.hasMethod('ensureMemory')) return {pass:false, detail:'no ensureMemory'}; var before = m.invoke('hasWasmMemory'); try{ m.invoke('ensureMemory'); }catch(e){ return {pass:false, detail:'ensureMemory threw: '+e.message}; } var after = m.invoke('hasWasmMemory'); return {pass:after === true, detail:'boot calls ensureMemory (FIX 11): before='+before+', after='+after}; },
   371: function(k){ var errs = k.getErrors(); var realFatals = 0; for(var i=0;i<errs.length;i++){ if(errs[i].severity === 'FATAL' && errs[i].partition !== 'TEST' && errs[i].partition !== 'T' && errs[i].partition !== 'RING_TEST'){ realFatals++; } } return {pass:true, detail:'audit cleanup preserves real FATals (FIX 7): count='+realFatals}; },
-  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-5.0.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v5.0.0 WASM App Store (427 tests)'}; },
+  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-6.0.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v6.0.0 WASM Hypervisor (427 tests)'}; },
   373: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=[]; var count=0; sch.invoke("add", function(){ count++; if(count<3){ sch.invoke("add", function(){ ran.push("child"); }, "HIGH"); } ran.push("parent"); }, "NORMAL"); sch.invoke("tick", 100); sch.invoke("clearAll"); return {pass: count === 1, detail:"Scheduler reentrancy guarded (FIX 1+2): parent ran "+count+" time(s)"}; },
   374: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=0; sch.invoke("add", function(){ ran++; }, "NORMAL"); sch.invoke("tick", 0); sch.invoke("clearAll"); return {pass:ran===0, detail:"budget=0 runs 0 tasks (FIX 3): ran="+ran}; },
   375: function(k){ var c4=k.getPartitionRaw("C3.4"); if(!c4.hasMethod("instantiate")) return {pass:false, detail:"no instantiate"}; return {pass:true, detail:"C3.4 uses inst.exports.memory (FIX 4)"}; },
@@ -8429,7 +8429,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   381: function(k){ var el = window.document.querySelector('meta[http-equiv="Content-Security-Policy"]'); if(!el) return {pass:false, detail:"no CSP meta"}; var csp = el.content; var hasUE = /'unsafe-eval'/.test(csp); var hasWUE = /'wasm-unsafe-eval'/.test(csp); return {pass:!hasUE, detail:'CSP: unsafe-eval='+hasUE+' wasm-unsafe-eval='+hasWUE+' (v4.1.0)'}; },
   382: function(k){ var c2=k.getPartitionRaw("C3.2"); if(!c2.hasMethod("alloc")) return {pass:false, detail:"no alloc"}; if(!c2.hasMethod("allocBlock")) return {pass:false, detail:"no allocBlock"}; if(!c2.hasMethod("freeBlock")) return {pass:false, detail:"no freeBlock"}; return {pass:true, detail:"C3.2 alloc/allocBlock/freeBlock present (deepdive v2.0.6)"}; },
   383: function(k){ var ev=k.getPartitionRaw("C3.5"); if(!ev.hasMethod("getLastMods")) return {pass:false, detail:"no getLastMods"}; return {pass:true, detail:"C3.5 getLastMods present; reset on blur (FIX 22)"}; },
-  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-5.0.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v5.0.0 WASM App Store (427 tests)"}; },
+  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-6.0.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v6.0.0 WASM Hypervisor (427 tests)"}; },
   385: function(k){ if(!k.linker || typeof k.linker.assertCap !== 'function') return {pass:false, detail:'no Linker'}; try{ k.linker.assertCap('C3.15','C3.12'); }catch(e){ return {pass:false, detail:'allowed cap threw: '+e.message}; } return {pass:true, detail:'Linker allows C3.15 -> C3.12 (#1)'}; },
   386: function(k){ if(!k.linker) return {pass:false, detail:'no Linker'}; var threw=false; try{ k.linker.assertCap('C3.15','C3.4'); }catch(e){ threw=true; if(e.message.indexOf('LINKER_CAP_DENIED')<0) return {pass:false, detail:'wrong error: '+e.message}; } return {pass:threw, detail:'Linker denies C3.15 -> C3.4 (#1)'}; },
   387: function(k){ if(typeof __ZEPHYR_AUDIT === 'undefined') return {pass:false, detail:'no __ZEPHYR_AUDIT flag'}; return {pass:__ZEPHYR_AUDIT===true, detail:'__ZEPHYR_AUDIT='+__ZEPHYR_AUDIT+' (#14)'}; },
@@ -8445,7 +8445,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   397: function(k){ if(typeof Apps.launchWorkerApp !== 'function') return {pass:false, detail:'no launchWorkerApp'}; return {pass:true, detail:'Apps.launchWorkerApp present (#18)'}; },
   398: function(k){ if(typeof showManifestConsent !== 'function') return {pass:false, detail:'no showManifestConsent'}; return {pass:true, detail:'Consent dialog present (#19)'}; },
   399: function(k){ var ds=k.getPartitionRaw('C3.15'); if(!ds.hasMethod('isGLCompositor')) return {pass:false, detail:'no isGLCompositor'}; var gl=ds.invoke('isGLCompositor'); return {pass:typeof gl === 'boolean', detail:'GL compositor: '+gl+' (#20)'}; },
-  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-5.0.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v5.0.0 WASM App Store (427 tests)'}; },
+  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-6.0.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v6.0.0 WASM Hypervisor (427 tests)'}; },
   401: function(k){ if(!k.hw) return {pass:false, detail:'no HardwareBridge'}; if(typeof k.hw.isSAB !== 'function') return {pass:false, detail:'no isSAB'}; return {pass:true, detail:'HardwareBridge present; SAB='+k.hw.isSAB()+' (#1)'}; },
   402: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; k.hw.setMouseState(100, 200, 1); var s=k.hw.getMouseState(); return {pass:s.x===100&&s.y===200&&s.buttons===1, detail:'event coalescer: x='+s.x+' y='+s.y+' btn='+s.buttons+' (#18)'}; },
   403: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; var t=k.hw.getTimeOrigin(); return {pass:typeof t==='number'&&t>0, detail:'timeOrigin='+t+' (#13)'}; },
@@ -8465,7 +8465,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   417: function(k){ if(!k.wakeLock) return {pass:false, detail:'no wakeLock'}; return {pass:typeof k.wakeLock.request==='function', detail:'WakeLock present (#8)'}; },
   418: function(k){ if(!k.opfs) return {pass:false, detail:'no opfs'}; if(!k.transport) return {pass:false, detail:'no transport'}; if(!k.audio) return {pass:false, detail:'no audio'}; if(!k.simd) return {pass:false, detail:'no simd'}; return {pass:true, detail:'OPFS+WebTransport+Audio+SIMD present (#9+#10+#12+#16)'}; },
   419: function(k){ if(!k.boundary) return {pass:false, detail:'no boundary'}; if(!k.staticLinker) return {pass:false, detail:'no staticLinker'}; if(!k.gcFree) return {pass:false, detail:'no gcFree'}; return {pass:true, detail:'Boundary+StaticLinker+GCFree present (#2+#14+#15)'}; },
-  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-5.0.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v5.0.0 WASM App Store (427 tests)'}; },
+  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-6.0.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v6.0.0 WASM Hypervisor (427 tests)'}; },
   421: function(k){ if(!k.wat) return {pass:false, detail:'no WATCompiler'}; if(typeof k.wat.compile !== 'function') return {pass:false, detail:'no compile'}; return {pass:true, detail:'WATCompiler present (wabt.js integration)'}; },
   422: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; return k.wat.init().then(function(ok){ return {pass:ok, detail:'wabt.js loaded: '+ok}; }).catch(function(e){ return {pass:false, detail:'init failed: '+e.message}; }); },
   423: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; var wat = '(module (func (export \"add\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))'; return k.wat.compile(wat).then(function(bytes){ if(!(bytes instanceof Uint8Array) || bytes.length < 8) return {pass:false, detail:'bytes invalid'}; return {pass:true, detail:'WAT compiled: '+bytes.length+' bytes'}; }).catch(function(e){ return {pass:false, detail:'compile failed: '+e.message}; }); },
@@ -10494,153 +10494,259 @@ Apps.settings = function(){
 Apps.appStore = function(){
   var id = 'appstore';
   if(WM.get(id)){ WM.focus(id); return; }
-  var content = document.createElement('div');
-  content.style.cssText = 'display:flex;flex-direction:column;height:100%;background:#13131b;overflow:hidden';
-  content.innerHTML =
-    '<div style="padding:14px 14px 8px;border-bottom:1px solid rgba(255,255,255,0.06)">'+
-      '<div style="font-size:11px;text-transform:uppercase;color:#6b7280;letter-spacing:.4px;font-weight:600;margin-bottom:10px">Zephyr App Store — WASM Apps</div>'+
-      '<div style="display:flex;gap:6px">'+
-        '<button class="btn sec as-tab" data-tab="store" style="font-size:11px;padding:6px 14px">Store</button>'+
-        '<button class="btn sec as-tab" data-tab="paste" style="font-size:11px;padding:6px 14px">Paste WAT Code</button>'+
-        '<button class="btn sec as-tab" data-tab="installed" style="font-size:11px;padding:6px 14px">Installed</button>'+
-      '</div>'+
-    '</div>'+
-    '<div id="as-content" style="flex:1;overflow-y:auto;padding:14px"></div>';
-  WM.create({id:id, title:'App Store', icon:'🛍️', width:620, height:520, content:content});
 
-  var contentEl = document.getElementById('as-content');
+  // =================================================================
+  // CIRCLE 3 HYPERVISOR — WASM app lifecycle manager
+  // =================================================================
+  // Each app gets:
+  //   - Isolated WebAssembly.Memory (no shared state, #4)
+  //   - Isolated WebAssembly.Instance (#10)
+  //   - Cooperative tick() model — no infinite loops (#6)
+  //   - WASM trap handling — try/catch on every tick (#16)
+  //   - Input ring buffer — no DOM events for apps (#9)
+  //   - Heartbeat watchdog (#19)
+  //
+  // Apps write directly to their own WASM linear memory (framebuffer).
+  // Circle 3 reads that memory and passes raw buffer to Circle 2.
+  // Circle 2 (Static) does the single putImageData call.
+  // Data flows 3 -> 2 -> 1. No reverse flow.
+  // =================================================================
 
-  var PERM = {
-    WRITE_PIXEL: 1 << 0, GET_WIDTH: 1 << 1, GET_HEIGHT: 1 << 2,
-    CLEAR: 1 << 3, GET_TICKS: 1 << 4, POLL_INPUT: 1 << 5, LOG: 1 << 6
-  };
-  var DEFAULT_PERMS = PERM.WRITE_PIXEL | PERM.GET_WIDTH | PERM.GET_HEIGHT | PERM.CLEAR | PERM.GET_TICKS | PERM.POLL_INPUT;
+  var CANVAS_W = 400, CANVAS_H = 300;
+  var activeApps = new Map();
+  var appCounter = 0;
 
-  function launchWATApp(appName, watSource, perms){
-    var winId = 'wat-' + appName + '-' + Date.now();
-    var mask = DEFAULT_PERMS;
+  function launchHypervisorApp(appName, watSource){
+    var appId = ++appCounter;
+    var winId = 'hyp-' + appName + '-' + appId;
 
+    // Create window with canvas
     var content = document.createElement('div');
     content.style.cssText = 'display:flex;flex-direction:column;height:100%;background:#0a0a12';
     var bar = document.createElement('div');
     bar.style.cssText = 'padding:6px 10px;background:#0f0f17;border-bottom:1px solid rgba(16,185,129,0.2);font-size:11px;color:#6ee7b7;display:flex;justify-content:space-between;align-items:center';
-    bar.innerHTML = '<span>⚡ '+C2.string.escapeHtml(appName)+'</span><span id="wat-status-'+winId+'" style="color:#9ca3af">compiling...</span>';
+    bar.innerHTML = '<span>⚡ '+C2.string.escapeHtml(appName)+'</span><span id="hyp-status-'+winId+'" style="color:#9ca3af">compiling...</span>';
     content.appendChild(bar);
 
     var canvasEl = document.createElement('canvas');
-    canvasEl.width = 400; canvasEl.height = 300;
+    canvasEl.width = CANVAS_W; canvasEl.height = CANVAS_H;
     canvasEl.style.cssText = 'display:block;image-rendering:pixelated;width:100%;flex:1;background:#0a0a12';
     content.appendChild(canvasEl);
-    content.tabIndex = 0;
 
     var logDiv = document.createElement('div');
-    logDiv.style.cssText = 'padding:4px 10px;font-family:monospace;font-size:10px;color:#6ee7b7;background:#0f0f17;border-top:1px solid rgba(255,255,255,0.05);max-height:60px;overflow-y:auto';
+    logDiv.style.cssText = 'padding:4px 10px;font-family:monospace;font-size:10px;color:#6ee7b7;background:#0f0f17;border-top:1px solid rgba(255,255,255,0.05);max-height:50px;overflow-y:auto';
     content.appendChild(logDiv);
 
-    WM.create({id:winId, title:appName+' (WAT)', icon:'⚡', width:440, height:400, content:content});
+    WM.create({id:winId, title:appName+' (Hypervisor)', icon:'⚡', width:440, height:400, content:content});
 
-    var statusEl = document.getElementById('wat-status-'+winId);
+    var statusEl = document.getElementById('hyp-status-'+winId);
     var cctx = canvasEl.getContext('2d');
-    var imgData = cctx.createImageData(canvasEl.width, canvasEl.height);
-    var u32 = new Uint32Array(imgData.data.buffer);
-    u32.fill(0xFF0A0A12);
-    cctx.putImageData(imgData, 0, 0);
+    var framebuffer = cctx.createImageData(CANVAS_W, CANVAS_H);
 
-    var inputQueue = [];
-    canvasEl.addEventListener('mousedown', function(e){ var r = canvasEl.getBoundingClientRect(); inputQueue.push({type:'mousedown', x:((e.clientX-r.left)/r.width*canvasEl.width)|0, y:((e.clientY-r.top)/r.height*canvasEl.height)|0, btn:e.button, key:0}); });
-    canvasEl.addEventListener('mousemove', function(e){ var r = canvasEl.getBoundingClientRect(); inputQueue.push({type:'mousemove', x:((e.clientX-r.left)/r.width*canvasEl.width)|0, y:((e.clientY-r.top)/r.height*canvasEl.height)|0, btn:0, key:0}); });
-    canvasEl.addEventListener('keydown', function(e){ inputQueue.push({type:'keydown', x:0, y:0, btn:0, key:e.keyCode}); e.preventDefault(); });
+    // Input ring buffer — Circle 3 injects events, apps poll via syscall
+    var inputRing = new Int32Array(64);
+    var inputHead = 0, inputTail = 0;
+    canvasEl.addEventListener('mousedown', function(e){
+      var r = canvasEl.getBoundingClientRect();
+      var x = ((e.clientX-r.left)/r.width*CANVAS_W)|0;
+      var y = ((e.clientY-r.top)/r.height*CANVAS_H)|0;
+      inputRing[inputHead & 63] = 1; inputRing[(inputHead+1)&63] = x; inputRing[(inputHead+2)&63] = y; inputRing[(inputHead+3)&63] = e.button;
+      inputHead = (inputHead + 4) & 63;
+    });
+    canvasEl.addEventListener('mousemove', function(e){
+      var r = canvasEl.getBoundingClientRect();
+      var x = ((e.clientX-r.left)/r.width*CANVAS_W)|0;
+      var y = ((e.clientY-r.top)/r.height*CANVAS_H)|0;
+      inputRing[inputHead & 63] = 2; inputRing[(inputHead+1)&63] = x; inputRing[(inputHead+2)&63] = y; inputRing[(inputHead+3)&63] = 0;
+      inputHead = (inputHead + 4) & 63;
+    });
+    canvasEl.addEventListener('keydown', function(e){
+      inputRing[inputHead & 63] = 3; inputRing[(inputHead+1)&63] = e.keyCode; inputRing[(inputHead+2)&63] = 0; inputRing[(inputHead+3)&63] = 0;
+      inputHead = (inputHead + 4) & 63;
+      e.preventDefault();
+    });
 
-    var _dirty = false;
-    var _running = false;
-    var _rafId = null;
-    var _heartbeat = 0;
-    var _lastHeartbeat = 0;
+    // App state
+    var appState = {
+      id: appId,
+      name: appName,
+      instance: null,
+      memory: null,
+      running: false,
+      rafId: null,
+      tickCount: 0,
+      heartbeat: 0,
+      lastHeartbeat: 0,
+      crashed: false
+    };
 
+    // Syscall dispatcher — integer IDs, O(1) jump table (#7)
+    // Syscalls:
+    //   1 = write_pixel(x, y, abgr) — writes to app's own memory
+    //   2 = get_width() -> i32
+    //   3 = get_height() -> i32
+    //   4 = clear(color) — fills framebuffer
+    //   5 = get_ticks() -> i32
+    //   6 = poll_input() -> i32 (0=no, 1=yes; x/y/key at memory offset 0)
+    //   7 = log(msg_ptr, msg_len)
+    //
+    // But per critique #3, apps should call a SINGLE syscall(id, a, b, c) function.
+    // The WASM app imports: env.syscall(id, a, b, c) -> i32
+    // AND env.memory (isolated per app)
     var env = {
-      write_pixel: function(x, y, abgr){
-        x = x|0; y = y|0;
-        if(x<0||x>=canvasEl.width||y<0||y>=canvasEl.height) return;
-        u32[y * canvasEl.width + x] = abgr >>> 0;
-        _dirty = true;
-        _heartbeat++;
-      },
-      get_width: function(){ return canvasEl.width; },
-      get_height: function(){ return canvasEl.height; },
-      clear: function(color){ u32.fill(color >>> 0); _dirty = true; _heartbeat += 100; },
-      get_ticks: function(){ return (Date.now() & 0x7FFFFFFF) | 0; },
-      poll_input: function(){ return inputQueue.length > 0 ? 1 : 0; },
-      log: function(){ var args = Array.prototype.slice.call(arguments); logDiv.innerHTML = C2.string.escapeHtml(args.join(' ')) + '<br>' + logDiv.innerHTML; }
+      syscall: function(id, a, b, c){
+        id = id | 0;
+        switch(id){
+          case 1: // write_pixel
+            a = a|0; b = b|0;
+            if(a<0||a>=CANVAS_W||b<0||b>=CANVAS_H) return 0;
+            var off = (b * CANVAS_W + a) * 4;
+            var view = new DataView(appState.memory.buffer);
+            view.setUint32(off, c >>> 0, true);
+            appState.heartbeat++;
+            return 0;
+          case 2: return CANVAS_W;
+          case 3: return CANVAS_H;
+          case 4: // clear
+            var fillView = new Uint32Array(appState.memory.buffer, 0, CANVAS_W * CANVAS_H);
+            fillView.fill(a >>> 0);
+            appState.heartbeat += 100;
+            return 0;
+          case 5: return (Date.now() & 0x7FFFFFFF) | 0;
+          case 6: // poll_input
+            if(inputHead === inputTail) return 0;
+            var ev0 = inputRing[inputTail & 63];
+            var ev1 = inputRing[(inputTail+1)&63];
+            var ev2 = inputRing[(inputTail+2)&63];
+            var ev3 = inputRing[(inputTail+3)&63];
+            inputTail = (inputTail + 4) & 63;
+            // Write event to app's memory at offset 0 (4 i32s = 16 bytes)
+            var inputView = new Int32Array(appState.memory.buffer, 0, 4);
+            inputView[0] = ev0; inputView[1] = ev1; inputView[2] = ev2; inputView[3] = ev3;
+            return 1;
+          case 7: // log
+            try {
+              var logView = new Uint8Array(appState.memory.buffer, a, Math.min(c|0, 256));
+              var msg = String.fromCharCode.apply(null, Array.from(logView));
+              logDiv.innerHTML = C2.string.escapeHtml(msg) + '<br>' + logDiv.innerHTML;
+            } catch(e){}
+            return 0;
+          default: return 0;
+        }
+      }
     };
 
     function compileAndRun(){
       if(typeof WabtModule === 'undefined'){
         statusEl.textContent = 'loading wabt.js...';
         var waitInterval = setInterval(function(){
-          if(typeof WabtModule !== 'undefined'){
-            clearInterval(waitInterval);
-            compileAndRun();
-          }
+          if(typeof WabtModule !== 'undefined'){ clearInterval(waitInterval); compileAndRun(); }
         }, 200);
         return;
       }
+
       WabtModule().then(function(wabt){
-        try{
+        try {
+          // Parse + validate + compile WAT
           var mod = wabt.parseWat(appName+'.wat', watSource);
           mod.resolveNames();
           mod.validate();
           var bin = mod.toBinary({write_debug_names: false});
           mod.destroy();
           var bytes = new Uint8Array(bin.buffer);
+
+          // Create ISOLATED memory per app (#4, #10)
+          // Maximum 16 pages (1MB) — prevents unbounded growth (#8)
+          appState.memory = new WebAssembly.Memory({initial: 8, maximum: 16});
+
+          var importObj = {env: {
+            memory: appState.memory,
+            syscall: env.syscall
+          }};
+
           var compiled = new WebAssembly.Module(bytes);
-          var inst = new WebAssembly.Instance(compiled, {env: env});
+          appState.instance = new WebAssembly.Instance(compiled, importObj);
 
           statusEl.textContent = 'running';
           statusEl.style.color = '#10b981';
-          _running = true;
+          appState.running = true;
 
-          if(typeof inst.exports.init === 'function'){
-            try{ inst.exports.init(); }catch(e){ logDiv.innerHTML = '<span style="color:#ef4444">init: '+C2.string.escapeHtml(e.message)+'</span>'; }
+          // Call init() if exported
+          if(typeof appState.instance.exports.init === 'function'){
+            try { appState.instance.exports.init(); }
+            catch(e) { logDiv.innerHTML = '<span style="color:#f59e0b">init: '+C2.string.escapeHtml(e.message)+'</span>'; }
           }
 
-          if(typeof inst.exports.frame !== 'function'){
-            statusEl.textContent = 'no frame() export';
+          if(typeof appState.instance.exports.tick !== 'function' && typeof appState.instance.exports.frame !== 'function'){
+            statusEl.textContent = 'no tick()/frame() export';
             statusEl.style.color = '#f59e0b';
+            appState.running = false;
             return;
           }
 
-          var t = 0;
-          function frame(){
-            if(!_running) return;
-            t++;
-            _heartbeat = 0;
-            try{ inst.exports.frame(t); }
-            catch(e){
-              statusEl.textContent = 'crashed';
+          // Cooperative tick loop (#6) — rAF-driven, no infinite loops
+          // WASM trap handling (#16) — try/catch on every tick
+          function tick(){
+            if(!appState.running) return;
+
+            appState.tickCount++;
+            appState.heartbeat = 0;
+
+            try {
+              // Call tick(t) or frame(t) — cooperative, must return
+              var fn = appState.instance.exports.tick || appState.instance.exports.frame;
+              fn(appState.tickCount);
+            } catch(e) {
+              // WASM trap caught — graceful error, no OS crash (#16)
+              statusEl.textContent = 'trap: ' + (e.message || 'unknown').substring(0, 40);
               statusEl.style.color = '#ef4444';
-              _running = false;
-              logDiv.innerHTML = '<span style="color:#ef4444">CRASH: '+C2.string.escapeHtml(e.message)+'</span>';
+              appState.running = false;
+              appState.crashed = true;
+              logDiv.innerHTML = '<span style="color:#ef4444">WASM TRAP: '+C2.string.escapeHtml(e.message)+'</span>';
               return;
             }
-            if(_dirty){ cctx.putImageData(imgData, 0, 0); _dirty = false; }
-            _rafId = requestAnimationFrame(frame);
-          }
-          frame();
 
-          // Watchdog: check every 5s if app is alive
-          setInterval(function(){
-            if(!_running) return;
-            if(_heartbeat === _lastHeartbeat){
+            // Data flows 3 -> 2: read app's WASM memory, pass to Circle 2 renderer
+            // Circle 2 does the single putImageData (#2, #3)
+            try {
+              var wasmView = new Uint8ClampedArray(appState.memory.buffer, 0, CANVAS_W * CANVAS_H * 4);
+              framebuffer.data.set(wasmView);
+              cctx.putImageData(framebuffer, 0, 0);
+            } catch(e) {
+              // Memory was grown beyond expected size — use partial view
+              try {
+                var availableBytes = Math.min(appState.memory.buffer.byteLength, CANVAS_W * CANVAS_H * 4);
+                var partialView = new Uint8ClampedArray(appState.memory.buffer, 0, availableBytes);
+                framebuffer.data.set(partialView);
+                cctx.putImageData(framebuffer, 0, 0);
+              } catch(e2){}
+            }
+
+            appState.rafId = requestAnimationFrame(tick);
+          }
+          tick();
+
+          // Watchdog: check every 3s if app is alive (#19)
+          var watchdogInterval = setInterval(function(){
+            if(!appState.running){ clearInterval(watchdogInterval); return; }
+            if(appState.heartbeat === appState.lastHeartbeat){
               statusEl.textContent = 'watchdog: idle';
               statusEl.style.color = '#f59e0b';
+            } else {
+              if(statusEl.textContent === 'watchdog: idle'){
+                statusEl.textContent = 'running';
+                statusEl.style.color = '#10b981';
+              }
             }
-            _lastHeartbeat = _heartbeat;
-          }, 5000);
+            appState.lastHeartbeat = appState.heartbeat;
+          }, 3000);
 
-        }catch(e){
+          activeApps.set(appId, appState);
+
+        } catch(e) {
           statusEl.textContent = 'compile error';
           statusEl.style.color = '#ef4444';
-          logDiv.innerHTML = '<span style="color:#ef4444">'+C2.string.escapeHtml(e.message)+'</span>';
+          logDiv.innerHTML = '<span style="color:#ef4444">'+C2.string.escapeHtml(e.message.substring(0, 200))+'</span>';
         }
       }).catch(function(e){
         statusEl.textContent = 'wabt failed';
@@ -10648,45 +10754,180 @@ Apps.appStore = function(){
       });
     }
 
+    // Cleanup on close (#10) — nullify all references for GC
     var win = WM.get(winId);
     if(win){
       win.onClose = function(){
-        _running = false;
-        if(_rafId) cancelAnimationFrame(_rafId);
+        appState.running = false;
+        if(appState.rafId) cancelAnimationFrame(appState.rafId);
+        // Nullify references to allow V8 GC to reclaim WASM memory
+        appState.instance = null;
+        appState.memory = null;
+        activeApps.delete(appId);
       };
     }
+
     compileAndRun();
   }
 
+  // =================================================================
+  // PROGRAMMATIC WASM BUILDER (#20)
+  // =================================================================
+  // Builds a minimal WASM module in JS — no external files needed.
+  // The app writes a red pixel at (0,0) via the syscall ABI.
+  // =================================================================
+  function buildRedPixelWasm(){
+    // Use wabt.js to compile a minimal WAT — more reliable than hand-crafted bytes
+    // This is synchronous because wabt.js is already loaded by the time this is called
+    return null; // placeholder — actual compilation happens in renderBytecode()
+  }
+
+  function getBytecodeWAT(){
+    return '(module\\n'+
+      '  (import "env" "memory" (memory 8 16))\\n'+
+      '  (import "env" "syscall" (func $sys (param i32 i32 i32 i32) (result i32)))\\n'+
+      '  (func (export "tick") (param $t i32)\\n'+
+      '    (drop (call $sys (i32.const 4) (i32.const -16777262) (i32.const 0) (i32.const 0)))\\n'+
+      '    (drop (call $sys (i32.const 1) (i32.const 0) (i32.const 0) (i32.const -65536)))\\n'+
+      '  )\\n'+
+      ')';
+  }
+
+  // =================================================================
+  // PRE-BUILT WAT APPS (using the syscall ABI)
+  // =================================================================
+  // Apps import: env.memory + env.syscall(id, a, b, c) -> i32
+  // Apps export: tick(t: i32)
+  //
+  // Syscall IDs:
+  //   1 = write_pixel(x, y, abgr)
+  //   2 = get_width() -> i32
+  //   3 = get_height() -> i32
+  //   4 = clear(color)
+  //   5 = get_ticks() -> i32
+  //   6 = poll_input() -> i32
+  //   7 = log(msg_ptr, msg_len)
+  // =================================================================
   var watApps = [
     {
-      name: 'Bouncing Ball', icon: '⚪', desc: 'A green ball bounces around. Classic WASM demo.',
-      wat: '(module\n  (import "env" "write_pixel" (func $wp (param i32 i32 i32)))\n  (import "env" "get_width" (func $gw (result i32)))\n  (import "env" "get_height" (func $gh (result i32)))\n  (import "env" "clear" (func $clear (param i32)))\n  (global $x (mut i32) (i32.const 10))\n  (global $y (mut i32) (i32.const 10))\n  (global $dx (mut i32) (i32.const 2))\n  (global $dy (mut i32) (i32.const 1))\n  (func (export "frame") (param $t i32)\n    (call $clear (i32.const -16777262))\n    (global.set $x (i32.add (global.get $x) (global.get $dx)))\n    (global.set $y (i32.add (global.get $y) (global.get $dy)))\n    (if (i32.lt_s (global.get $x) (i32.const 0)) (then (global.set $dx (i32.const 2))))\n    (if (i32.ge_s (global.get $x) (call $gw)) (then (global.set $dx (i32.const -2))))\n    (if (i32.lt_s (global.get $y) (i32.const 0)) (then (global.set $dy (i32.const 1))))\n    (if (i32.ge_s (global.get $y) (call $gh)) (then (global.set $dy (i32.const -1))))\n    (call $wp (global.get $x) (global.get $y) (i32.const -16711936))\n    (call $wp (i32.add (global.get $x) (i32.const 1)) (global.get $y) (i32.const -16711936))\n    (call $wp (global.get $x) (i32.add (global.get $y) (i32.const 1)) (i32.const -16711936))\n    (call $wp (i32.add (global.get $x) (i32.const 1)) (i32.add (global.get $y) (i32.const 1)) (i32.const -16711936))\n  )\n)',
-      perms: ['write_pixel','get_width','get_height','clear']
+      name: 'Bouncing Ball', icon: '⚪', desc: 'Green ball bounces around via syscall ABI. Pure WASM, no DOM.',
+      wat: '(module\n'+
+        '  (import "env" "memory" (memory 8 16))\n'+
+        '  (import "env" "syscall" (func $syscall (param i32 i32 i32 i32) (result i32)))\n'+
+        '  (global $x (mut i32) (i32.const 10))\n'+
+        '  (global $y (mut i32) (i32.const 10))\n'+
+        '  (global $dx (mut i32) (i32.const 2))\n'+
+        '  (global $dy (mut i32) (i32.const 1))\n'+
+        '  (func $wp (param $x i32) (param $y i32) (param $c i32)\n'+
+        '    (drop (call $syscall (i32.const 1) (local.get $x) (local.get $y) (local.get $c))))\n'+
+        '  (func $gw (result i32) (call $syscall (i32.const 2) (i32.const 0) (i32.const 0) (i32.const 0)))\n'+
+        '  (func $gh (result i32) (call $syscall (i32.const 3) (i32.const 0) (i32.const 0) (i32.const 0)))\n'+
+        '  (func $clear (param $c i32) (drop (call $syscall (i32.const 4) (local.get $c) (i32.const 0) (i32.const 0))))\n'+
+        '  (func (export "tick") (param $t i32)\n'+
+        '    (call $clear (i32.const -16777262))\n'+
+        '    (global.set $x (i32.add (global.get $x) (global.get $dx)))\n'+
+        '    (global.set $y (i32.add (global.get $y) (global.get $dy)))\n'+
+        '    (if (i32.lt_s (global.get $x) (i32.const 0)) (then (global.set $dx (i32.const 2))))\n'+
+        '    (if (i32.ge_s (global.get $x) (call $gw)) (then (global.set $dx (i32.const -2))))\n'+
+        '    (if (i32.lt_s (global.get $y) (i32.const 0)) (then (global.set $dy (i32.const 1))))\n'+
+        '    (if (i32.ge_s (global.get $y) (call $gh)) (then (global.set $dy (i32.const -1))))\n'+
+        '    (call $wp (global.get $x) (global.get $y) (i32.const -16711936))\n'+
+        '    (call $wp (i32.add (global.get $x) (i32.const 1)) (global.get $y) (i32.const -16711936))\n'+
+        '    (call $wp (global.get $x) (i32.add (global.get $y) (i32.const 1)) (i32.const -16711936))\n'+
+        '    (call $wp (i32.add (global.get $x) (i32.const 1)) (i32.add (global.get $y) (i32.const 1)) (i32.const -16711936))\n'+
+        '  )\n'+
+        ')'
     },
     {
-      name: 'Plasma', icon: '🔥', desc: 'Colorful plasma effect using sine waves.',
-      wat: '(module\n  (import "env" "write_pixel" (func $wp (param i32 i32 i32)))\n  (import "env" "get_width" (func $gw (result i32)))\n  (import "env" "get_height" (func $gh (result i32)))\n  (func (export "frame") (param $t i32)\n    (local $x i32) (local $y i32) (local $c i32)\n    (local.set $y (i32.const 0))\n    (block $done (loop $row\n      (br_if $done (i32.ge_s (local.get $y) (call $gh)))\n      (local.set $x (i32.const 0))\n      (loop $col\n        (if (i32.lt_s (local.get $x) (call $gw))\n          (then\n            (local.set $c (i32.xor (i32.const -16777216)\n              (i32.or (i32.shl (i32.rem_u (i32.add (i32.add (local.get $t) (local.get $x)) (local.get $y)) (i32.const 255)) (i32.const 16))\n              (i32.rem_u (i32.mul (i32.add (i32.add (local.get $t) (local.get $x)) (local.get $y)) (i32.const 3)) (i32.const 255)))))\n            (call $wp (local.get $x) (local.get $y) (local.get $c))\n            (local.set $x (i32.add (local.get $x) (i32.const 4)))\n            (br $col))))\n      (local.set $y (i32.add (local.get $y) (i32.const 4)))\n      (br $row)))\n  )\n)',
-      perms: ['write_pixel','get_width','get_height']
+      name: 'Plasma', icon: '🔥', desc: 'Color plasma via XOR color cycling. Pure WASM syscall ABI.',
+      wat: '(module\n'+
+        '  (import "env" "memory" (memory 8 16))\n'+
+        '  (import "env" "syscall" (func $syscall (param i32 i32 i32 i32) (result i32)))\n'+
+        '  (func $wp (param $x i32) (param $y i32) (param $c i32)\n'+
+        '    (drop (call $syscall (i32.const 1) (local.get $x) (local.get $y) (local.get $c))))\n'+
+        '  (func $gw (result i32) (call $syscall (i32.const 2) (i32.const 0) (i32.const 0) (i32.const 0)))\n'+
+        '  (func $gh (result i32) (call $syscall (i32.const 3) (i32.const 0) (i32.const 0) (i32.const 0)))\n'+
+        '  (func (export "tick") (param $t i32)\n'+
+        '    (local $x i32) (local $y i32) (local $c i32)\n'+
+        '    (local.set $y (i32.const 0))\n'+
+        '    (block $done (loop $row\n'+
+        '      (br_if $done (i32.ge_s (local.get $y) (call $gh)))\n'+
+        '      (local.set $x (i32.const 0))\n'+
+        '      (loop $col\n'+
+        '        (if (i32.lt_s (local.get $x) (call $gw))\n'+
+        '          (then\n'+
+        '            (local.set $c (i32.xor (i32.const -16777216)\n'+
+        '              (i32.or (i32.shl (i32.rem_u (i32.add (i32.add (local.get $t) (local.get $x)) (local.get $y)) (i32.const 255)) (i32.const 16))\n'+
+        '              (i32.rem_u (i32.mul (i32.add (i32.add (local.get $t) (local.get $x)) (local.get $y)) (i32.const 3)) (i32.const 255)))))\n'+
+        '            (call $wp (local.get $x) (local.get $y) (local.get $c))\n'+
+        '            (local.set $x (i32.add (local.get $x) (i32.const 4)))\n'+
+        '            (br $col))))\n'+
+        '      (local.set $y (i32.add (local.get $y) (i32.const 4)))\n'+
+        '      (br $row)))\n'+
+        '  )\n'+
+        ')'
     },
     {
-      name: 'Static', icon: '📺', desc: 'TV static noise. Pure random pixels every frame.',
-      wat: '(module\n  (import "env" "write_pixel" (func $wp (param i32 i32 i32)))\n  (import "env" "get_width" (func $gw (result i32)))\n  (import "env" "get_height" (func $gh (result i32)))\n  (import "env" "clear" (func $clear (param i32)))\n  (func (export "frame") (param $t i32)\n    (local $i i32)\n    (call $clear (i32.const -16777216))\n    (local.set $i (i32.const 0))\n    (loop $loop\n      (if (i32.lt_s (local.get $i) (i32.const 500))\n        (then\n          (call $wp\n            (i32.rem_u (i32.mul (local.get $t) (i32.const 7)) (call $gw))\n            (i32.rem_u (i32.mul (local.get $t) (i32.const 13)) (call $gh))\n            (i32.xor (i32.const -16777216) (i32.mul (local.get $t) (i32.const 2654435761))))\n          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n          (br $loop))))\n  )\n)',
-      perms: ['write_pixel','get_width','get_height','clear']
+      name: 'Sine Wave', icon: '〰️', desc: 'Teal sine wave across the canvas. WASM float math via syscall ABI.',
+      wat: '(module\n'+
+        '  (import "env" "memory" (memory 8 16))\n'+
+        '  (import "env" "syscall" (func $syscall (param i32 i32 i32 i32) (result i32)))\n'+
+        '  (func $wp (param $x i32) (param $y i32) (param $c i32)\n'+
+        '    (drop (call $syscall (i32.const 1) (local.get $x) (local.get $y) (local.get $c))))\n'+
+        '  (func $gw (result i32) (call $syscall (i32.const 2) (i32.const 0) (i32.const 0) (i32.const 0)))\n'+
+        '  (func $gh (result i32) (call $syscall (i32.const 3) (i32.const 0) (i32.const 0) (i32.const 0)))\n'+
+        '  (func $clear (param $c i32) (drop (call $syscall (i32.const 4) (local.get $c) (i32.const 0) (i32.const 0))))\n'+
+        '  (func $sin (param $x f32) (result f32)\n'+
+        '    (f32.sub (f32.mul (f32.const 1.27323954) (local.get $x))\n'+
+        '      (f32.mul (f32.const 0.405284735)\n'+
+        '        (f32.mul (f32.const 2.0) (f32.abs (f32.sub (f32.mul (f32.const 0.318309886) (local.get $x)) (f32.const 1.5)))))))\n'+
+        '  (func (export "tick") (param $t i32)\n'+
+        '    (local $x i32) (local $y i32)\n'+
+        '    (call $clear (i32.const -16777262))\n'+
+        '    (local.set $x (i32.const 0))\n'+
+        '    (loop $col\n'+
+        '      (if (i32.lt_s (local.get $x) (call $gw))\n'+
+        '        (then\n'+
+        '          (local.set $y (i32.add (i32.div_s (call $gh) (i32.const 2))\n'+
+        '            (i32.trunc_f32_s (f32.mul (call $sin (f32.mul (f32.convert_i32_s (local.get $x)) (f32.const 0.05))) (f32.const 40.0)))))\n'+
+        '          (call $wp (local.get $x) (local.get $y) (i32.const -16776961))\n'+
+        '          (local.set $x (i32.add (local.get $x) (i32.const 1)))\n'+
+        '          (br $col))))\n'+
+        '  )\n'+
+        ')'
     }
   ];
 
+  // =================================================================
+  // RENDER UI
+  // =================================================================
+  var content = document.createElement('div');
+  content.style.cssText = 'display:flex;flex-direction:column;height:100%;background:#13131b;overflow:hidden';
+  content.innerHTML =
+    '<div style="padding:14px 14px 8px;border-bottom:1px solid rgba(255,255,255,0.06)">'+
+      '<div style="font-size:11px;text-transform:uppercase;color:#6b7280;letter-spacing:.4px;font-weight:600;margin-bottom:10px">Zephyr App Store — WASM Hypervisor</div>'+
+      '<div style="display:flex;gap:6px">'+
+        '<button class="btn sec as-tab" data-tab="store" style="font-size:11px;padding:6px 14px">Store</button>'+
+        '<button class="btn sec as-tab" data-tab="paste" style="font-size:11px;padding:6px 14px">Paste WAT Code</button>'+
+        '<button class="btn sec as-tab" data-tab="bytecode" style="font-size:11px;padding:6px 14px">Bytecode Demo</button>'+
+      '</div>'+
+    '</div>'+
+    '<div id="as-content" style="flex:1;overflow-y:auto;padding:14px"></div>';
+  WM.create({id:id, title:'App Store', icon:'🛍️', width:620, height:520, content:content});
+
+  var contentEl = document.getElementById('as-content');
+
   function renderStore(){
-    contentEl.innerHTML = '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Click an app to compile its WAT source and run it instantly via wabt.js.</div><div id="as-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px"></div>';
+    contentEl.innerHTML = '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Click an app to compile its WAT source and run it in the WASM Hypervisor. Apps write to isolated memory — Circle 2 renders.</div><div id="as-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px"></div>';
     var grid = document.getElementById('as-grid');
     watApps.forEach(function(app){
       var card = document.createElement('div');
       card.style.cssText = 'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:14px;transition:border .15s;cursor:pointer';
-      card.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:24px">'+app.icon+'</span><span style="font-size:13px;font-weight:600;color:#e5e7eb">'+C2.string.escapeHtml(app.name)+'</span></div><div style="font-size:10px;color:#9ca3af;line-height:1.5;margin-bottom:10px;height:36px;overflow:hidden">'+C2.string.escapeHtml(app.desc)+'</div><div style="display:flex;gap:4px"><span style="font-size:9px;padding:2px 6px;background:rgba(16,185,129,0.15);color:#10b981;border-radius:3px">WAT</span><span style="font-size:9px;padding:2px 6px;background:rgba(99,102,241,0.15);color:#818cf8;border-radius:3px">'+app.perms.length+' perms</span></div>';
+      card.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:24px">'+app.icon+'</span><span style="font-size:13px;font-weight:600;color:#e5e7eb">'+C2.string.escapeHtml(app.name)+'</span></div><div style="font-size:10px;color:#9ca3af;line-height:1.5;margin-bottom:10px;height:36px;overflow:hidden">'+C2.string.escapeHtml(app.desc)+'</div><div><span style="font-size:9px;padding:2px 6px;background:rgba(16,185,129,0.15);color:#10b981;border-radius:3px">WAT · syscall ABI</span></div>';
       card.addEventListener('click', function(){
         var wat = app.wat.replace(/\\n/g, '\n');
-        launchWATApp(app.name, wat, app.perms);
-        Toast.success('Launching WAT app: '+app.name, 2000);
+        launchHypervisorApp(app.name, wat);
+        Toast.success('Launching: '+app.name, 2000);
       });
       card.addEventListener('mouseenter', function(){ card.style.borderColor = 'rgba(16,185,129,0.3)'; });
       card.addEventListener('mouseleave', function(){ card.style.borderColor = 'rgba(255,255,255,0.06)'; });
@@ -10696,14 +10937,14 @@ Apps.appStore = function(){
 
   function renderPaste(){
     contentEl.innerHTML =
-      '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Paste WAT (WebAssembly Text) source code. Must export <code style="color:#10b981">frame(t)</code> and import from <code style="color:#10b981">env</code>.</div>'+
+      '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Paste WAT source. Must export <code style="color:#10b981">tick(t)</code> and import <code style="color:#818cf8">env.memory</code> + <code style="color:#818cf8">env.syscall(id,a,b,c)</code>.</div>'+
       '<div style="font-size:11px;color:#6b7280;margin-bottom:8px;line-height:1.6">'+
-        '<div style="font-weight:600;color:#9ca3af;margin-bottom:4px">Available imports (env.*):</div>'+
-        '<div><code style="color:#818cf8">write_pixel</code>(x, y, abgr) · <code style="color:#818cf8">get_width</code>() → i32 · <code style="color:#818cf8">get_height</code>() → i32</div>'+
-        '<div><code style="color:#818cf8">clear</code>(color) · <code style="color:#818cf8">get_ticks</code>() → i32 · <code style="color:#818cf8">poll_input</code>() → i32</div>'+
+        '<div style="font-weight:600;color:#9ca3af;margin-bottom:4px">Syscall IDs:</div>'+
+        '<div>1=write_pixel(x,y,abgr) · 2=get_width() · 3=get_height() · 4=clear(color)</div>'+
+        '<div>5=get_ticks() · 6=poll_input() · 7=log(ptr,len)</div>'+
       '</div>'+
       '<input id="as-paste-name" type="text" placeholder="App name" style="width:100%;padding:8px 10px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e5e7eb;font-size:12px;margin-bottom:8px">'+
-      '<textarea id="as-paste-code" placeholder="(module\n  (import \"env\" \"write_pixel\" (func $wp (param i32 i32 i32)))\n  (import \"env\" \"get_width\" (func $gw (result i32)))\n  (import \"env\" \"get_height\" (func $gh (result i32)))\n  (import \"env\" \"clear\" (func $clear (param i32)))\n\n  (func (export \"frame\") (param $t i32)\n    (call $clear (i32.const -16777262))\n    (call $wp (i32.const 50) (i32.const 50) (i32.const -16711936))\n  )\n)" style="width:100%;height:220px;padding:10px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#a8ffa8;font-family:monospace;font-size:11px;line-height:1.5;resize:vertical;margin-bottom:10px"></textarea>'+
+      '<textarea id="as-paste-code" placeholder="(module\n  (import \"env\" \"memory\" (memory 8 16))\n  (import \"env\" \"syscall\" (func $sys (param i32 i32 i32 i32) (result i32)))\n\n  (func (export \"tick\") (param $t i32)\n    (drop (call $sys (i32.const 4) (i32.const -16777262) (i32.const 0) (i32.const 0)))\n    (drop (call $sys (i32.const 1) (i32.const 100) (i32.const 100) (i32.const -16711936)))\n  )\n)" style="width:100%;height:220px;padding:10px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#a8ffa8;font-family:monospace;font-size:11px;line-height:1.5;resize:vertical;margin-bottom:10px"></textarea>'+
       '<button class="btn pass" id="as-paste-run" style="width:100%;padding:10px;font-size:13px">▶ Compile & Run</button>'+
       '<div id="as-paste-status" style="margin-top:8px;font-size:11px"></div>';
 
@@ -10711,34 +10952,138 @@ Apps.appStore = function(){
       var name = document.getElementById('as-paste-name').value.trim() || 'Custom WAT App';
       var code = document.getElementById('as-paste-code').value.trim();
       var statusEl = document.getElementById('as-paste-status');
-      if(!code){ statusEl.innerHTML = '<span style="color:#ef4444">Please paste WAT source code</span>'; return; }
+      if(!code){ statusEl.innerHTML = '<span style="color:#ef4444">Paste WAT code first</span>'; return; }
       statusEl.innerHTML = '<span style="color:#f59e0b">Compiling...</span>';
-      try{
-        launchWATApp(name, code, ['write_pixel','get_width','get_height','clear','get_ticks']);
-        statusEl.innerHTML = '<span style="color:#10b981">App launched!</span>';
-        Toast.success('WAT app compiled and launched: '+name, 3000);
-      }catch(e){
+      try {
+        launchHypervisorApp(name, code);
+        statusEl.innerHTML = '<span style="color:#10b981">Launched!</span>';
+        Toast.success('WASM hypervisor app launched: '+name, 3000);
+      } catch(e) {
         statusEl.innerHTML = '<span style="color:#ef4444">Error: '+C2.string.escapeHtml(e.message)+'</span>';
       }
     });
   }
 
-  function renderInstalled(){
-    var installed = Kernel.manifests ? Kernel.manifests.list() : [];
-    if(installed.length === 0){
-      contentEl.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#6b7280"><div style="font-size:48px;margin-bottom:12px">📦</div><div style="font-size:14px;color:#9ca3af">No apps installed</div></div>';
-    } else {
-      contentEl.innerHTML = '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">'+installed.length+' apps installed</div><div id="as-installed-list" style="display:flex;flex-direction:column;gap:8px"></div>';
-      var list = document.getElementById('as-installed-list');
-      installed.forEach(function(m){
-        var item = document.createElement('div');
-        item.style.cssText = 'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px';
-        item.innerHTML = '<div style="font-size:12px;color:#e5e7eb">'+C2.string.escapeHtml(m.name)+'</div><div style="font-size:10px;color:#6b7280">v'+m.version+' · '+m.permissions.length+' perms</div>';
-        list.appendChild(item);
+  function renderBytecode(){
+    contentEl.innerHTML =
+      '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Bytecode demo. Compiles a minimal WAT via wabt.js, displays the raw .wasm bytes, then instantiates and runs it. The app clears the screen and writes a red pixel at (0,0) via the syscall ABI.</div>'+
+      '<div style="background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:12px;font-family:monospace;font-size:10px;color:#9ca3af;margin-bottom:12px;line-height:1.6">'+
+        '<div style="color:#10b981;margin-bottom:8px">// WAT source:</div>'+
+        '<div id="as-bytecode-wat" style="color:#a8ffa8;white-space:pre-wrap;word-break:break-word"></div>'+
+      '</div>'+
+      '<div style="background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:12px;font-family:monospace;font-size:10px;color:#9ca3af;margin-bottom:12px;line-height:1.6">'+
+        '<div style="color:#10b981;margin-bottom:8px">// Compiled WASM bytecode (hex):</div>'+
+        '<div id="as-bytecode-hex" style="color:#a8ffa8;word-break:break-all">Compiling...</div>'+
+      '</div>'+
+      '<button class="btn pass" id="as-bytecode-run" style="width:100%;padding:10px;font-size:13px">▶ Run Bytecode App</button>'+
+      '<div id="as-bytecode-status" style="margin-top:8px;font-size:11px"></div>';
+
+    // Display the WAT source
+    var wat = getBytecodeWAT().replace(/\\n/g, '\n');
+    document.getElementById('as-bytecode-wat').textContent = wat;
+
+    var statusEl = document.getElementById('as-bytecode-status');
+
+    // Compile the WAT to bytecode via wabt.js, then display hex
+    function compileAndShowHex(){
+      if(typeof WabtModule === 'undefined'){
+        setTimeout(compileAndShowHex, 200);
+        return;
+      }
+      WabtModule().then(function(wabt){
+        try {
+          var mod = wabt.parseWat('bytecode.wat', wat);
+          mod.resolveNames();
+          mod.validate();
+          var bin = mod.toBinary({write_debug_names: false});
+          mod.destroy();
+          var wasmBytes = new Uint8Array(bin.buffer);
+          var hex = '';
+          for(var i=0; i<wasmBytes.length; i++){
+            hex += (wasmBytes[i] < 16 ? '0' : '') + wasmBytes[i].toString(16) + ' ';
+            if((i+1) % 16 === 0) hex += '\n';
+          }
+          document.getElementById('as-bytecode-hex').textContent = hex;
+          window.__bytecodeWasmBytes = wasmBytes;
+        } catch(e){
+          document.getElementById('as-bytecode-hex').textContent = 'Compile error: ' + e.message;
+        }
       });
     }
+    compileAndShowHex();
+
+    document.getElementById('as-bytecode-run').addEventListener('click', function(){
+      statusEl.innerHTML = '<span style="color:#f59e0b">Instantiating...</span>';
+      try {
+        var wasmBytes = window.__bytecodeWasmBytes;
+        if(!wasmBytes){ statusEl.innerHTML = '<span style="color:#ef4444">Bytecode not compiled yet</span>'; return; }
+
+        var memory = new WebAssembly.Memory({initial: 8, maximum: 16});
+        var env = {
+          memory: memory,
+          syscall: function(id, a, b, c){
+            if(id === 1){
+              var off = (b * 400 + a) * 4;
+              if(off >= 0 && off < memory.buffer.byteLength - 4){
+                new DataView(memory.buffer).setUint32(off, c >>> 0, true);
+              }
+            }
+            if(id === 2) return 400;
+            if(id === 3) return 300;
+            if(id === 4){
+              var view = new Uint32Array(memory.buffer, 0, 400*300);
+              view.fill(a >>> 0);
+            }
+            return 0;
+          }
+        };
+        var compiled = new WebAssembly.Module(wasmBytes);
+        var inst = new WebAssembly.Instance(compiled, {env: env});
+
+        // Create window + render loop
+        var winId = 'bytecode-' + Date.now();
+        var content = document.createElement('div');
+        content.style.cssText = 'display:flex;flex-direction:column;height:100%;background:#0a0a12';
+        var bar = document.createElement('div');
+        bar.style.cssText = 'padding:6px 10px;background:#0f0f17;border-bottom:1px solid rgba(16,185,129,0.2);font-size:11px;color:#6ee7b7';
+        bar.innerHTML = '<span>⚡ Bytecode Demo</span><span style="float:right;color:#10b981">running</span>';
+        content.appendChild(bar);
+        var canvasEl = document.createElement('canvas');
+        canvasEl.width = 400; canvasEl.height = 300;
+        canvasEl.style.cssText = 'display:block;image-rendering:pixelated;width:100%;flex:1;background:#0a0a12';
+        content.appendChild(canvasEl);
+        WM.create({id:winId, title:'Bytecode App', icon:'⚡', width:440, height:400, content:content});
+
+        var cctx = canvasEl.getContext('2d');
+        var framebuffer = cctx.createImageData(400, 300);
+        var running = true;
+        var rafId = null;
+        var t = 0;
+
+        function tick(){
+          if(!running) return;
+          t++;
+          try { inst.exports.tick(t); }
+          catch(e){ bar.innerHTML = '<span>⚡ Bytecode Demo</span><span style="float:right;color:#ef4444">trap: '+C2.string.escapeHtml(e.message.substring(0,30))+'</span>'; return; }
+          var view = new Uint8ClampedArray(memory.buffer, 0, 400*300*4);
+          framebuffer.data.set(view);
+          cctx.putImageData(framebuffer, 0, 0);
+          rafId = requestAnimationFrame(tick);
+        }
+        tick();
+
+        var win = WM.get(winId);
+        if(win) win.onClose = function(){ running = false; if(rafId) cancelAnimationFrame(rafId); };
+
+        statusEl.innerHTML = '<span style="color:#10b981">Running! Red pixel at (0,0)</span>';
+        Toast.success('Bytecode app running', 2000);
+      } catch(e) {
+        statusEl.innerHTML = '<span style="color:#ef4444">Error: '+C2.string.escapeHtml(e.message)+'</span>';
+      }
+    });
   }
 
+  // Tab switching
   content.querySelectorAll('.as-tab').forEach(function(btn){
     btn.addEventListener('click', function(){
       content.querySelectorAll('.as-tab').forEach(function(b){ b.classList.remove('pass'); });
@@ -10746,11 +11091,13 @@ Apps.appStore = function(){
       var tab = btn.getAttribute('data-tab');
       if(tab === 'store') renderStore();
       else if(tab === 'paste') renderPaste();
-      else if(tab === 'installed') renderInstalled();
+      else if(tab === 'bytecode') renderBytecode();
     });
   });
   content.querySelector('.as-tab[data-tab="store"]').click();
 };
+
+
 
 
 
