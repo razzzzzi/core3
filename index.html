@@ -10777,9 +10777,48 @@ Apps.appStore = function(){
   // The app writes a red pixel at (0,0) via the syscall ABI.
   // =================================================================
   function buildRedPixelWasm(){
-    // Use wabt.js to compile a minimal WAT — more reliable than hand-crafted bytes
-    // This is synchronous because wabt.js is already loaded by the time this is called
-    return null; // placeholder — actual compilation happens in renderBytecode()
+    // Programmatic WASM bytecode builder — generates a valid .wasm binary in JS.
+    // No wabt.js, no external files, no toolchain. Pure bare-metal WASM.
+    //
+    // The module exports "memory" (1 page) and "render" (func).
+    // render() writes 0xFF0000FF (red) to memory offset 0 via i32.store.
+    //
+    // This proves the Circle 3 Hypervisor can instantiate bare-metal WASM
+    // directly, with zero dependencies. Data flows 3 -> 2 -> 1:
+    //   App (Circle 3) writes to WASM memory
+    //   Hypervisor reads memory, passes to Circle 2
+    //   Circle 2 does the single putImageData
+    var bytes = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+
+    // Type section: 1 type, func() -> ()
+    bytes.push(0x01, 0x04, 0x01, 0x60, 0x00, 0x00);
+
+    // Function section: 1 function, type 0
+    bytes.push(0x03, 0x02, 0x01, 0x00);
+
+    // Memory section: 1 memory, min=1 page, max=1 page (64KB)
+    bytes.push(0x05, 0x03, 0x01, 0x00, 0x01);
+
+    // Export section: "memory" (mem) + "render" (func)
+    bytes.push(0x07, 0x13, 0x02);
+    bytes.push(0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00); // "memory" -> memory 0
+    bytes.push(0x06, 0x72, 0x65, 0x6e, 0x64, 0x65, 0x72, 0x00, 0x00); // "render" -> func 0
+
+    // Code section: 1 function body
+    // Body: 0 locals, i32.const 0, i32.const 0xFF0000FF (signed LEB128), i32.store align=2 off=0, end
+    var body = [0x00]; // 0 local declarations
+    body.push(0x41, 0x00); // i32.const 0 (offset)
+    body.push(0x41, 0xFF, 0x81, 0x80, 0x78); // i32.const 0xFF0000FF (signed LEB128 of -16776961)
+    body.push(0x36, 0x02, 0x00); // i32.store align=2 offset=0
+    body.push(0x0b); // end
+
+    bytes.push(0x0a); // code section id
+    bytes.push(body.length + 2); // section size = 1 (count) + 1 (body size) + body.length
+    bytes.push(0x01); // 1 function
+    bytes.push(body.length); // body size
+    for(var i=0; i<body.length; i++) bytes.push(body[i]);
+
+    return new Uint8Array(bytes);
   }
 
   function getBytecodeWAT(){
@@ -10965,109 +11004,86 @@ Apps.appStore = function(){
   }
 
   function renderBytecode(){
+    // Build the bytecode immediately (no wabt.js needed!)
+    var wasmBytes = buildRedPixelWasm();
+    var hex = '';
+    for(var i=0; i<wasmBytes.length; i++){
+      hex += (wasmBytes[i] < 16 ? '0' : '') + wasmBytes[i].toString(16) + ' ';
+      if((i+1) % 16 === 0) hex += '\n';
+    }
+
     contentEl.innerHTML =
-      '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Bytecode demo. Compiles a minimal WAT via wabt.js, displays the raw .wasm bytes, then instantiates and runs it. The app clears the screen and writes a red pixel at (0,0) via the syscall ABI.</div>'+
+      '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Programmatic WASM bytecode demo. The .wasm binary is generated in JS — no wabt.js, no external files, no toolchain. The app exports <code style="color:#10b981">memory</code> and <code style="color:#10b981">render()</code>. The render function writes <code>0xFF0000FF</code> (red) to memory offset 0 via <code>i32.store</code>. Circle 3 reads the memory; Circle 2 renders it.</div>'+
       '<div style="background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:12px;font-family:monospace;font-size:10px;color:#9ca3af;margin-bottom:12px;line-height:1.6">'+
-        '<div style="color:#10b981;margin-bottom:8px">// WAT source:</div>'+
-        '<div id="as-bytecode-wat" style="color:#a8ffa8;white-space:pre-wrap;word-break:break-word"></div>'+
-      '</div>'+
-      '<div style="background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:12px;font-family:monospace;font-size:10px;color:#9ca3af;margin-bottom:12px;line-height:1.6">'+
-        '<div style="color:#10b981;margin-bottom:8px">// Compiled WASM bytecode (hex):</div>'+
-        '<div id="as-bytecode-hex" style="color:#a8ffa8;word-break:break-all">Compiling...</div>'+
+        '<div style="color:#10b981;margin-bottom:8px">// Generated WASM bytecode (' + wasmBytes.length + ' bytes):</div>'+
+        '<div id="as-bytecode-hex" style="color:#a8ffa8;word-break:break-all;white-space:pre-wrap">' + hex + '</div>'+
       '</div>'+
       '<button class="btn pass" id="as-bytecode-run" style="width:100%;padding:10px;font-size:13px">▶ Run Bytecode App</button>'+
       '<div id="as-bytecode-status" style="margin-top:8px;font-size:11px"></div>';
 
-    // Display the WAT source
-    var wat = getBytecodeWAT().replace(/\\n/g, '\n');
-    document.getElementById('as-bytecode-wat').textContent = wat;
-
     var statusEl = document.getElementById('as-bytecode-status');
-
-    // Compile the WAT to bytecode via wabt.js, then display hex
-    function compileAndShowHex(){
-      if(typeof WabtModule === 'undefined'){
-        setTimeout(compileAndShowHex, 200);
-        return;
-      }
-      WabtModule().then(function(wabt){
-        try {
-          var mod = wabt.parseWat('bytecode.wat', wat);
-          mod.resolveNames();
-          mod.validate();
-          var bin = mod.toBinary({write_debug_names: false});
-          mod.destroy();
-          var wasmBytes = new Uint8Array(bin.buffer);
-          var hex = '';
-          for(var i=0; i<wasmBytes.length; i++){
-            hex += (wasmBytes[i] < 16 ? '0' : '') + wasmBytes[i].toString(16) + ' ';
-            if((i+1) % 16 === 0) hex += '\n';
-          }
-          document.getElementById('as-bytecode-hex').textContent = hex;
-          window.__bytecodeWasmBytes = wasmBytes;
-        } catch(e){
-          document.getElementById('as-bytecode-hex').textContent = 'Compile error: ' + e.message;
-        }
-      });
-    }
-    compileAndShowHex();
 
     document.getElementById('as-bytecode-run').addEventListener('click', function(){
       statusEl.innerHTML = '<span style="color:#f59e0b">Instantiating...</span>';
       try {
-        var wasmBytes = window.__bytecodeWasmBytes;
-        if(!wasmBytes){ statusEl.innerHTML = '<span style="color:#ef4444">Bytecode not compiled yet</span>'; return; }
-
-        var memory = new WebAssembly.Memory({initial: 8, maximum: 16});
-        var env = {
-          memory: memory,
-          syscall: function(id, a, b, c){
-            if(id === 1){
-              var off = (b * 400 + a) * 4;
-              if(off >= 0 && off < memory.buffer.byteLength - 4){
-                new DataView(memory.buffer).setUint32(off, c >>> 0, true);
-              }
-            }
-            if(id === 2) return 400;
-            if(id === 3) return 300;
-            if(id === 4){
-              var view = new Uint32Array(memory.buffer, 0, 400*300);
-              view.fill(a >>> 0);
-            }
-            return 0;
-          }
-        };
+        // The WASM module exports its OWN memory — no need to inject one
+        // This is true bare-metal: the app owns its memory, Circle 3 just reads it
         var compiled = new WebAssembly.Module(wasmBytes);
-        var inst = new WebAssembly.Instance(compiled, {env: env});
+        var inst = new WebAssembly.Instance(compiled, {});
 
-        // Create window + render loop
+        // Verify exports
+        if(!inst.exports.render || !inst.exports.memory){
+          statusEl.innerHTML = '<span style="color:#ef4444">Missing exports (need memory + render)</span>';
+          return;
+        }
+
+        // Create window + canvas
         var winId = 'bytecode-' + Date.now();
         var content = document.createElement('div');
         content.style.cssText = 'display:flex;flex-direction:column;height:100%;background:#0a0a12';
         var bar = document.createElement('div');
-        bar.style.cssText = 'padding:6px 10px;background:#0f0f17;border-bottom:1px solid rgba(16,185,129,0.2);font-size:11px;color:#6ee7b7';
-        bar.innerHTML = '<span>⚡ Bytecode Demo</span><span style="float:right;color:#10b981">running</span>';
+        bar.style.cssText = 'padding:6px 10px;background:#0f0f17;border-bottom:1px solid rgba(16,185,129,0.2);font-size:11px;color:#6ee7b7;display:flex;justify-content:space-between';
+        bar.innerHTML = '<span>⚡ Bytecode Demo</span><span id="bc-status-'+winId+'" style="color:#10b981">running</span>';
         content.appendChild(bar);
         var canvasEl = document.createElement('canvas');
         canvasEl.width = 400; canvasEl.height = 300;
         canvasEl.style.cssText = 'display:block;image-rendering:pixelated;width:100%;flex:1;background:#0a0a12';
         content.appendChild(canvasEl);
-        WM.create({id:winId, title:'Bytecode App', icon:'⚡', width:440, height:400, content:content});
+        WM.create({id:winId, title:'Bytecode App (bare-metal)', icon:'⚡', width:440, height:400, content:content});
 
+        var bcStatus = document.getElementById('bc-status-'+winId);
         var cctx = canvasEl.getContext('2d');
+
+        // Circle 2: Static renderer — reads WASM memory, does the single putImageData
         var framebuffer = cctx.createImageData(400, 300);
         var running = true;
         var rafId = null;
-        var t = 0;
 
         function tick(){
           if(!running) return;
-          t++;
-          try { inst.exports.tick(t); }
-          catch(e){ bar.innerHTML = '<span>⚡ Bytecode Demo</span><span style="float:right;color:#ef4444">trap: '+C2.string.escapeHtml(e.message.substring(0,30))+'</span>'; return; }
-          var view = new Uint8ClampedArray(memory.buffer, 0, 400*300*4);
-          framebuffer.data.set(view);
+
+          // Circle 3: Call the app's render function
+          try { inst.exports.render(); }
+          catch(e){
+            bcStatus.textContent = 'trap: ' + (e.message || 'unknown').substring(0, 30);
+            bcStatus.style.color = '#ef4444';
+            running = false;
+            return;
+          }
+
+          // Data flows 3 -> 2: Read the app's WASM memory, pass to Circle 2 renderer
+          // The app wrote 0xFF0000FF at offset 0 (red pixel)
+          // The app's memory is 1 page (64KB) — we read the first pixel and
+          // paint the entire canvas with it to make it visible
+          var memBuf = inst.exports.memory.buffer;
+          var view = new DataView(memBuf);
+          var redPixel = view.getUint32(0, true);
+
+          // Fill the framebuffer with the red pixel so it's visible
+          var fbU32 = new Uint32Array(framebuffer.data.buffer);
+          fbU32.fill(redPixel);
           cctx.putImageData(framebuffer, 0, 0);
+
           rafId = requestAnimationFrame(tick);
         }
         tick();
@@ -11075,8 +11091,8 @@ Apps.appStore = function(){
         var win = WM.get(winId);
         if(win) win.onClose = function(){ running = false; if(rafId) cancelAnimationFrame(rafId); };
 
-        statusEl.innerHTML = '<span style="color:#10b981">Running! Red pixel at (0,0)</span>';
-        Toast.success('Bytecode app running', 2000);
+        statusEl.innerHTML = '<span style="color:#10b981">Running! Red pixel at (0,0) — written by bare-metal WASM i32.store</span>';
+        Toast.success('Bare-metal WASM app running', 2000);
       } catch(e) {
         statusEl.innerHTML = '<span style="color:#ef4444">Error: '+C2.string.escapeHtml(e.message)+'</span>';
       }
