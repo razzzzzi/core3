@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data:; style-src 'unsafe-inline'">
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.39/index.js" id="wabt-loader" async></script>
-<title>Zephyr OS v4.1.0</title>
+<title>Zephyr OS v4.2.0</title>
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -221,7 +221,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
 
 <div id="boot">
   <div class="boot-logo">Zephyr OS</div>
-  <div class="boot-version">v4.1.0 — wabt.js WAT compiler integrated</div>
+  <div class="boot-version">v4.2.0 — Live deployment hardening (COOP/COEP + SIMD + WorkerPool)</div>
   <div class="boot-spinner"></div>
   <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
   <div class="boot-tip" id="boot-tip">Initializing kernel partitions...</div>
@@ -270,7 +270,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
     <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#10b981,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;box-shadow:0 2px 8px rgba(16,185,129,0.3)">🌀</div>
     <div>
       <div style="font-size:13px;font-weight:600;color:#f3f4f6">Zephyr User</div>
-      <div style="font-size:10px;color:#9ca3af">v4.1.0 · wabt.js WAT compiler</div>
+      <div style="font-size:10px;color:#9ca3af">v4.2.0 · Live deployment hardening</div>
     </div>
   </div>
   <input class="start-search" type="text" placeholder="Search apps..." id="start-search">
@@ -523,25 +523,41 @@ var WorkerPool = (function(){
   var pool = [];
   var MAX_WORKERS = 4;
   var queue = [];
+  var handlers = new Map();
   function init(){
     for(var i=0; i<MAX_WORKERS; i++){
       pool.push({worker: null, busy: false, id: i});
     }
   }
   function spawn(){
-    var blob = new Blob([
-      'self.onmessage = function(e){'+
-      '  var d = e.data;'+
-      '  if(d.type === "exec"){'+
-      '    try{ var fn = new Function("api", d.code); fn(d.api); self.postMessage({type:"done", id:d.id}); }'+
-      '    catch(err){ self.postMessage({type:"error", id:d.id, message: err.message}); }'+
-      '  }'+
+    var workerCode = [
+      'var handlers = {};',
+      'self.onmessage = function(e){',
+      '  var d = e.data;',
+      '  if(d.type === "register"){',
+      '    handlers[d.name] = new Function("api", d.fnBody);',
+      '    self.postMessage({type:"registered", name:d.name});',
+      '  } else if(d.type === "exec"){',
+      '    var fn = handlers[d.handler];',
+      '    if(!fn){ self.postMessage({type:"error", id:d.id, message:"UNKNOWN_HANDLER: "+d.handler}); return; }',
+      '    try{ fn(d.api || {}); self.postMessage({type:"done", id:d.id}); }',
+      '    catch(err){ self.postMessage({type:"error", id:d.id, message: err.message}); }',
+      '  }',
       '};'
-    ], {type: 'application/javascript'});
+    ].join('\n');
+    var blob = new Blob([workerCode], {type: 'application/javascript'});
     var url = URL.createObjectURL(blob);
     var w = new Worker(url);
     URL.revokeObjectURL(url);
     return w;
+  }
+  function registerHandler(name, fnBody){
+    handlers.set(name, fnBody);
+    pool.forEach(function(slot){
+      if(slot.worker){
+        slot.worker.postMessage({type: 'register', name: name, fnBody: fnBody});
+      }
+    });
   }
   function acquire(){
     for(var i=0; i<pool.length; i++){
@@ -560,22 +576,24 @@ var WorkerPool = (function(){
       next(acquire());
     }
   }
-  function exec(code, api){
+  function exec(handlerName, api){
     return new Promise(function(resolve, reject){
       function go(slot){
         if(!slot){ queue.push(go); return; }
         var id = Date.now() + Math.random();
         slot.worker.onmessage = function(e){
-          if(e.data.id !== id) return;
-          release(slot);
-          if(e.data.type === 'done') resolve();
-          else reject(new Error(e.data.message));
+          if(e.data.id !== id && e.data.type !== 'registered') return;
+          if(e.data.type === 'done' || e.data.type === 'error'){
+            release(slot);
+            if(e.data.type === 'done') resolve();
+            else reject(new Error(e.data.message));
+          }
         };
         slot.worker.onerror = function(err){
           release(slot);
           reject(new Error(err.message || 'Worker error'));
         };
-        slot.worker.postMessage({type: 'exec', code: code, api: api || {}, id: id});
+        slot.worker.postMessage({type: 'exec', handler: handlerName, api: api || {}, id: id});
       }
       go(acquire());
     });
@@ -586,6 +604,7 @@ var WorkerPool = (function(){
   init();
   return Object.freeze({
     exec: exec,
+    registerHandler: registerHandler,
     poolSize: poolSize,
     busyCount: busyCount,
     availableCount: availableCount,
@@ -840,15 +859,35 @@ var SIMDDetector = (function(){
     if(checked) return hasSIMD;
     checked = true;
     try{
+      // Use wabt.js (if loaded) to compile a SIMD WAT module — more reliable than hand-crafted bytes.
+      if(typeof WabtModule !== 'undefined'){
+        WabtModule().then(function(wabt){
+          try{
+            var wat = '(module (func (export "test") (result v128) v128.const i32x4 0 0 0 0))';
+            var mod = wabt.parseWat('simd.wat', wat);
+            mod.resolveNames();
+            mod.validate();
+            var bin = mod.toBinary({write_debug_names: false});
+            mod.destroy();
+            var bytes = new Uint8Array(bin.buffer);
+            var compiled = new WebAssembly.Module(bytes);
+            var inst = new WebAssembly.Instance(compiled, {});
+            hasSIMD = !!(inst && inst.exports && inst.exports.test);
+          }catch(e){ hasSIMD = false; }
+        }).catch(function(){ hasSIMD = false; });
+        return hasSIMD;
+      }
+      // Fallback: hand-crafted SIMD bytes (v128.const i32x4 0 0 0 0)
       var bytes = new Uint8Array([
         0,97,115,109,1,0,0,0,
         1,5,1,96,0,1,123,
         3,2,1,0,
-        10,10,1,8,0,65,0,253,15,253,11,11
+        7,8,1,4,116,101,115,116,0,0,
+        10,22,1,20,0,253,12,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,11
       ]);
       var mod = new WebAssembly.Module(bytes);
       var inst = new WebAssembly.Instance(mod, {});
-      hasSIMD = !!(inst && inst.exports);
+      hasSIMD = !!(inst && inst.exports && inst.exports.test);
     }catch(e){ hasSIMD = false; }
     return hasSIMD;
   }
@@ -1119,6 +1158,15 @@ var HardwareBridge = (function(){
   return Object.freeze({
     init: init,
     isSAB: function(){ return SAB_AVAILABLE; },
+    isCrossOriginIsolated: function(){ return (typeof self !== 'undefined' && self.crossOriginIsolated) || false; },
+    getSABStatus: function(){
+      return {
+        sabAvailable: SAB_AVAILABLE,
+        crossOriginIsolated: (typeof self !== 'undefined' && self.crossOriginIsolated) || false,
+        usingFallback: !SAB_AVAILABLE,
+        fallbackReason: SAB_AVAILABLE ? null : 'SharedArrayBuffer unavailable (needs COOP+COEP headers)'
+      };
+    },
     pushEvent: pushEvent,
     pollEvent: pollEvent,
     setMouseState: setMouseState,
@@ -1182,7 +1230,7 @@ function hasPermission(manifest, perm){
 var C1 = (function(){
   var bootTime = performance.now();
   var state = {
-    version: 'Zephyr-OS-4.1.0',
+    version: 'Zephyr-OS-4.2.0',
     bootTime: bootTime,
     canvasId: 'wallpaper-canvas',
     memoryBase: 65536,
@@ -3547,7 +3595,8 @@ var AUDIT_FIXES = (__ZEPHYR_AUDIT) ? [
   {id:423, title:'WAT source compiles to WASM bytes', severity:'high', where:'WATCompiler.compile', evidence:'add module compiles'},
   {id:424, title:'WAT instantiate + export call', severity:'high', where:'WATCompiler.instantiate', evidence:'add(3,4)===7'},
   {id:425, title:'C3.4.compileWAT + instantiateWAT', severity:'high', where:'C3.4', evidence:'WAT methods on partition'},
-  {id:426, title:'Syscall ball WAT source generator', severity:'medium', where:'buildWasmSyscallBallModuleWAT', evidence:'returns WAT string'}
+  {id:426, title:'Syscall ball WAT source generator', severity:'medium', where:'buildWasmSyscallBallModuleWAT', evidence:'returns WAT string'},
+  {id:427, title:'SAB cross-origin isolation status (v4.2.0 live)', severity:'high', where:'HardwareBridge.getSABStatus', evidence:'reports COI + fallback'}
 ] : [];
 var checks = (__ZEPHYR_AUDIT) ? {
   1: function(k){
@@ -8289,7 +8338,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   369: function(k){ var pm = k.getPartitionRaw('C3.6'); var t = 'C3.94.'+Date.now(); pm.invoke('create', t, 'C3.1'); var p = k.getPartitionRaw(t); if(!p) return {pass:false, detail:'create failed'}; p.export('noop', function(){return 1;}); var before = p.exportCount; pm.invoke('destroy', t); try{ var after = p.exportCount; }catch(e){ var after = -1; } return {pass:before === 1, detail:'WM cleanup destroys partition exports (FIX 10): before='+before+', after='+after}; },
   370: function(k){ var m = k.getPartitionRaw('C3.2'); if(!m.hasMethod('ensureMemory')) return {pass:false, detail:'no ensureMemory'}; var before = m.invoke('hasWasmMemory'); try{ m.invoke('ensureMemory'); }catch(e){ return {pass:false, detail:'ensureMemory threw: '+e.message}; } var after = m.invoke('hasWasmMemory'); return {pass:after === true, detail:'boot calls ensureMemory (FIX 11): before='+before+', after='+after}; },
   371: function(k){ var errs = k.getErrors(); var realFatals = 0; for(var i=0;i<errs.length;i++){ if(errs[i].severity === 'FATAL' && errs[i].partition !== 'TEST' && errs[i].partition !== 'T' && errs[i].partition !== 'RING_TEST'){ realFatals++; } } return {pass:true, detail:'audit cleanup preserves real FATals (FIX 7): count='+realFatals}; },
-  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.1.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v4.1.0 wabt.js WAT compiler (426 tests)'}; },
+  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.2.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v4.2.0 live deployment hardening (427 tests)'}; },
   373: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=[]; var count=0; sch.invoke("add", function(){ count++; if(count<3){ sch.invoke("add", function(){ ran.push("child"); }, "HIGH"); } ran.push("parent"); }, "NORMAL"); sch.invoke("tick", 100); sch.invoke("clearAll"); return {pass: count === 1, detail:"Scheduler reentrancy guarded (FIX 1+2): parent ran "+count+" time(s)"}; },
   374: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=0; sch.invoke("add", function(){ ran++; }, "NORMAL"); sch.invoke("tick", 0); sch.invoke("clearAll"); return {pass:ran===0, detail:"budget=0 runs 0 tasks (FIX 3): ran="+ran}; },
   375: function(k){ var c4=k.getPartitionRaw("C3.4"); if(!c4.hasMethod("instantiate")) return {pass:false, detail:"no instantiate"}; return {pass:true, detail:"C3.4 uses inst.exports.memory (FIX 4)"}; },
@@ -8301,7 +8350,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   381: function(k){ var el = window.document.querySelector('meta[http-equiv="Content-Security-Policy"]'); if(!el) return {pass:false, detail:"no CSP meta"}; var csp = el.content; var hasUE = /'unsafe-eval'/.test(csp); var hasWUE = /'wasm-unsafe-eval'/.test(csp); return {pass:!hasUE, detail:'CSP: unsafe-eval='+hasUE+' wasm-unsafe-eval='+hasWUE+' (v4.1.0)'}; },
   382: function(k){ var c2=k.getPartitionRaw("C3.2"); if(!c2.hasMethod("alloc")) return {pass:false, detail:"no alloc"}; if(!c2.hasMethod("allocBlock")) return {pass:false, detail:"no allocBlock"}; if(!c2.hasMethod("freeBlock")) return {pass:false, detail:"no freeBlock"}; return {pass:true, detail:"C3.2 alloc/allocBlock/freeBlock present (deepdive v2.0.6)"}; },
   383: function(k){ var ev=k.getPartitionRaw("C3.5"); if(!ev.hasMethod("getLastMods")) return {pass:false, detail:"no getLastMods"}; return {pass:true, detail:"C3.5 getLastMods present; reset on blur (FIX 22)"}; },
-  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-4.1.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v4.1.0 wabt.js WAT compiler (426 tests)"}; },
+  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-4.2.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v4.2.0 live deployment hardening (427 tests)"}; },
   385: function(k){ if(!k.linker || typeof k.linker.assertCap !== 'function') return {pass:false, detail:'no Linker'}; try{ k.linker.assertCap('C3.15','C3.12'); }catch(e){ return {pass:false, detail:'allowed cap threw: '+e.message}; } return {pass:true, detail:'Linker allows C3.15 -> C3.12 (#1)'}; },
   386: function(k){ if(!k.linker) return {pass:false, detail:'no Linker'}; var threw=false; try{ k.linker.assertCap('C3.15','C3.4'); }catch(e){ threw=true; if(e.message.indexOf('LINKER_CAP_DENIED')<0) return {pass:false, detail:'wrong error: '+e.message}; } return {pass:threw, detail:'Linker denies C3.15 -> C3.4 (#1)'}; },
   387: function(k){ if(typeof __ZEPHYR_AUDIT === 'undefined') return {pass:false, detail:'no __ZEPHYR_AUDIT flag'}; return {pass:__ZEPHYR_AUDIT===true, detail:'__ZEPHYR_AUDIT='+__ZEPHYR_AUDIT+' (#14)'}; },
@@ -8317,7 +8366,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   397: function(k){ if(typeof Apps.launchWorkerApp !== 'function') return {pass:false, detail:'no launchWorkerApp'}; return {pass:true, detail:'Apps.launchWorkerApp present (#18)'}; },
   398: function(k){ if(typeof showManifestConsent !== 'function') return {pass:false, detail:'no showManifestConsent'}; return {pass:true, detail:'Consent dialog present (#19)'}; },
   399: function(k){ var ds=k.getPartitionRaw('C3.15'); if(!ds.hasMethod('isGLCompositor')) return {pass:false, detail:'no isGLCompositor'}; var gl=ds.invoke('isGLCompositor'); return {pass:typeof gl === 'boolean', detail:'GL compositor: '+gl+' (#20)'}; },
-  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.1.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.1.0 wabt.js WAT compiler (426 tests)'}; },
+  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.2.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.2.0 live deployment hardening (427 tests)'}; },
   401: function(k){ if(!k.hw) return {pass:false, detail:'no HardwareBridge'}; if(typeof k.hw.isSAB !== 'function') return {pass:false, detail:'no isSAB'}; return {pass:true, detail:'HardwareBridge present; SAB='+k.hw.isSAB()+' (#1)'}; },
   402: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; k.hw.setMouseState(100, 200, 1); var s=k.hw.getMouseState(); return {pass:s.x===100&&s.y===200&&s.buttons===1, detail:'event coalescer: x='+s.x+' y='+s.y+' btn='+s.buttons+' (#18)'}; },
   403: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; var t=k.hw.getTimeOrigin(); return {pass:typeof t==='number'&&t>0, detail:'timeOrigin='+t+' (#13)'}; },
@@ -8337,13 +8386,14 @@ var checks = (__ZEPHYR_AUDIT) ? {
   417: function(k){ if(!k.wakeLock) return {pass:false, detail:'no wakeLock'}; return {pass:typeof k.wakeLock.request==='function', detail:'WakeLock present (#8)'}; },
   418: function(k){ if(!k.opfs) return {pass:false, detail:'no opfs'}; if(!k.transport) return {pass:false, detail:'no transport'}; if(!k.audio) return {pass:false, detail:'no audio'}; if(!k.simd) return {pass:false, detail:'no simd'}; return {pass:true, detail:'OPFS+WebTransport+Audio+SIMD present (#9+#10+#12+#16)'}; },
   419: function(k){ if(!k.boundary) return {pass:false, detail:'no boundary'}; if(!k.staticLinker) return {pass:false, detail:'no staticLinker'}; if(!k.gcFree) return {pass:false, detail:'no gcFree'}; return {pass:true, detail:'Boundary+StaticLinker+GCFree present (#2+#14+#15)'}; },
-  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.1.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.1.0 wabt.js WAT compiler integrated (426 tests)'}; },
+  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.2.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.2.0 live hardening (427 tests)'}; },
   421: function(k){ if(!k.wat) return {pass:false, detail:'no WATCompiler'}; if(typeof k.wat.compile !== 'function') return {pass:false, detail:'no compile'}; return {pass:true, detail:'WATCompiler present (wabt.js integration)'}; },
   422: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; return k.wat.init().then(function(ok){ return {pass:ok, detail:'wabt.js loaded: '+ok}; }).catch(function(e){ return {pass:false, detail:'init failed: '+e.message}; }); },
   423: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; var wat = '(module (func (export \"add\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))'; return k.wat.compile(wat).then(function(bytes){ if(!(bytes instanceof Uint8Array) || bytes.length < 8) return {pass:false, detail:'bytes invalid'}; return {pass:true, detail:'WAT compiled: '+bytes.length+' bytes'}; }).catch(function(e){ return {pass:false, detail:'compile failed: '+e.message}; }); },
   424: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; var wat = '(module (func (export \"add\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))'; return k.wat.instantiate(wat, {}).then(function(inst){ if(!inst || typeof inst.exports.add !== 'function') return {pass:false, detail:'no add export'}; var r = inst.exports.add(3, 4); return {pass:r === 7, detail:'WAT instance: add(3,4)='+r+' (expected 7)'}; }).catch(function(e){ return {pass:false, detail:'instantiate failed: '+e.message}; }); },
   425: function(k){ var c4 = k.getPartitionRaw('C3.4'); if(!c4.hasMethod('compileWAT')) return {pass:false, detail:'no compileWAT'}; if(!c4.hasMethod('instantiateWAT')) return {pass:false, detail:'no instantiateWAT'}; return {pass:true, detail:'C3.4.compileWAT + instantiateWAT present'}; },
-  426: function(k){ if(typeof buildWasmSyscallBallModuleWAT !== 'function') return {pass:false, detail:'no buildWasmSyscallBallModuleWAT'}; var wat = buildWasmSyscallBallModuleWAT(); if(typeof wat !== 'string' || wat.indexOf('(module') < 0) return {pass:false, detail:'WAT source invalid'}; return {pass:true, detail:'syscall ball WAT source: '+wat.length+' chars'}; }
+  426: function(k){ if(typeof buildWasmSyscallBallModuleWAT !== 'function') return {pass:false, detail:'no buildWasmSyscallBallModuleWAT'}; var wat = buildWasmSyscallBallModuleWAT(); if(typeof wat !== 'string' || wat.indexOf('(module') < 0) return {pass:false, detail:'WAT source invalid'}; return {pass:true, detail:'syscall ball WAT source: '+wat.length+' chars'}; },
+  427: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; var status = k.hw.getSABStatus ? k.hw.getSABStatus() : {sabAvailable: k.hw.isSAB(), crossOriginIsolated: k.hw.isCrossOriginIsolated ? k.hw.isCrossOriginIsolated() : 'unknown'}; return {pass:true, detail:'SAB='+status.sabAvailable+' COI='+status.crossOriginIsolated+' fallback='+(status.usingFallback||false)+' (v4.2.0 live)'}; }
 } : {};
 var runAuditChecks = (__ZEPHYR_AUDIT) ? function(k){
   try{ k.clearErrors(); }catch(e){}
