@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data: blob:; style-src 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net">
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.39/index.js" id="wabt-loader" async></script>
-<title>Zephyr OS v4.3.0</title>
+<title>Zephyr OS v5.0.0</title>
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -221,7 +221,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
 
 <div id="boot">
   <div class="boot-logo">Zephyr OS</div>
-  <div class="boot-version">v4.3.0 — Performance acceleration (writePixel batching + cached views)</div>
+  <div class="boot-version">v5.0.0 — App Store rewrite (WASM-first) (writePixel batching + cached views)</div>
   <div class="boot-spinner"></div>
   <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
   <div class="boot-tip" id="boot-tip">Initializing kernel partitions...</div>
@@ -270,7 +270,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
     <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#10b981,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;box-shadow:0 2px 8px rgba(16,185,129,0.3)">🌀</div>
     <div>
       <div style="font-size:13px;font-weight:600;color:#f3f4f6">Zephyr User</div>
-      <div style="font-size:10px;color:#9ca3af">v4.3.0 · Performance accelerated</div>
+      <div style="font-size:10px;color:#9ca3af">v5.0.0 · WASM App Store</div>
     </div>
   </div>
   <input class="start-search" type="text" placeholder="Search apps..." id="start-search">
@@ -1291,7 +1291,7 @@ function hasPermission(manifest, perm){
 var C1 = (function(){
   var bootTime = performance.now();
   var state = {
-    version: 'Zephyr-OS-4.3.0',
+    version: 'Zephyr-OS-5.0.0',
     bootTime: bootTime,
     canvasId: 'wallpaper-canvas',
     memoryBase: 65536,
@@ -8417,7 +8417,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   369: function(k){ var pm = k.getPartitionRaw('C3.6'); var t = 'C3.94.'+Date.now(); pm.invoke('create', t, 'C3.1'); var p = k.getPartitionRaw(t); if(!p) return {pass:false, detail:'create failed'}; p.export('noop', function(){return 1;}); var before = p.exportCount; pm.invoke('destroy', t); try{ var after = p.exportCount; }catch(e){ var after = -1; } return {pass:before === 1, detail:'WM cleanup destroys partition exports (FIX 10): before='+before+', after='+after}; },
   370: function(k){ var m = k.getPartitionRaw('C3.2'); if(!m.hasMethod('ensureMemory')) return {pass:false, detail:'no ensureMemory'}; var before = m.invoke('hasWasmMemory'); try{ m.invoke('ensureMemory'); }catch(e){ return {pass:false, detail:'ensureMemory threw: '+e.message}; } var after = m.invoke('hasWasmMemory'); return {pass:after === true, detail:'boot calls ensureMemory (FIX 11): before='+before+', after='+after}; },
   371: function(k){ var errs = k.getErrors(); var realFatals = 0; for(var i=0;i<errs.length;i++){ if(errs[i].severity === 'FATAL' && errs[i].partition !== 'TEST' && errs[i].partition !== 'T' && errs[i].partition !== 'RING_TEST'){ realFatals++; } } return {pass:true, detail:'audit cleanup preserves real FATals (FIX 7): count='+realFatals}; },
-  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.3.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v4.3.0 performance accelerated (427 tests)'}; },
+  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-5.0.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v5.0.0 WASM App Store (427 tests)'}; },
   373: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=[]; var count=0; sch.invoke("add", function(){ count++; if(count<3){ sch.invoke("add", function(){ ran.push("child"); }, "HIGH"); } ran.push("parent"); }, "NORMAL"); sch.invoke("tick", 100); sch.invoke("clearAll"); return {pass: count === 1, detail:"Scheduler reentrancy guarded (FIX 1+2): parent ran "+count+" time(s)"}; },
   374: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=0; sch.invoke("add", function(){ ran++; }, "NORMAL"); sch.invoke("tick", 0); sch.invoke("clearAll"); return {pass:ran===0, detail:"budget=0 runs 0 tasks (FIX 3): ran="+ran}; },
   375: function(k){ var c4=k.getPartitionRaw("C3.4"); if(!c4.hasMethod("instantiate")) return {pass:false, detail:"no instantiate"}; return {pass:true, detail:"C3.4 uses inst.exports.memory (FIX 4)"}; },
@@ -8429,7 +8429,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   381: function(k){ var el = window.document.querySelector('meta[http-equiv="Content-Security-Policy"]'); if(!el) return {pass:false, detail:"no CSP meta"}; var csp = el.content; var hasUE = /'unsafe-eval'/.test(csp); var hasWUE = /'wasm-unsafe-eval'/.test(csp); return {pass:!hasUE, detail:'CSP: unsafe-eval='+hasUE+' wasm-unsafe-eval='+hasWUE+' (v4.1.0)'}; },
   382: function(k){ var c2=k.getPartitionRaw("C3.2"); if(!c2.hasMethod("alloc")) return {pass:false, detail:"no alloc"}; if(!c2.hasMethod("allocBlock")) return {pass:false, detail:"no allocBlock"}; if(!c2.hasMethod("freeBlock")) return {pass:false, detail:"no freeBlock"}; return {pass:true, detail:"C3.2 alloc/allocBlock/freeBlock present (deepdive v2.0.6)"}; },
   383: function(k){ var ev=k.getPartitionRaw("C3.5"); if(!ev.hasMethod("getLastMods")) return {pass:false, detail:"no getLastMods"}; return {pass:true, detail:"C3.5 getLastMods present; reset on blur (FIX 22)"}; },
-  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-4.3.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v4.3.0 performance accelerated (427 tests)"}; },
+  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-5.0.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v5.0.0 WASM App Store (427 tests)"}; },
   385: function(k){ if(!k.linker || typeof k.linker.assertCap !== 'function') return {pass:false, detail:'no Linker'}; try{ k.linker.assertCap('C3.15','C3.12'); }catch(e){ return {pass:false, detail:'allowed cap threw: '+e.message}; } return {pass:true, detail:'Linker allows C3.15 -> C3.12 (#1)'}; },
   386: function(k){ if(!k.linker) return {pass:false, detail:'no Linker'}; var threw=false; try{ k.linker.assertCap('C3.15','C3.4'); }catch(e){ threw=true; if(e.message.indexOf('LINKER_CAP_DENIED')<0) return {pass:false, detail:'wrong error: '+e.message}; } return {pass:threw, detail:'Linker denies C3.15 -> C3.4 (#1)'}; },
   387: function(k){ if(typeof __ZEPHYR_AUDIT === 'undefined') return {pass:false, detail:'no __ZEPHYR_AUDIT flag'}; return {pass:__ZEPHYR_AUDIT===true, detail:'__ZEPHYR_AUDIT='+__ZEPHYR_AUDIT+' (#14)'}; },
@@ -8445,7 +8445,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   397: function(k){ if(typeof Apps.launchWorkerApp !== 'function') return {pass:false, detail:'no launchWorkerApp'}; return {pass:true, detail:'Apps.launchWorkerApp present (#18)'}; },
   398: function(k){ if(typeof showManifestConsent !== 'function') return {pass:false, detail:'no showManifestConsent'}; return {pass:true, detail:'Consent dialog present (#19)'}; },
   399: function(k){ var ds=k.getPartitionRaw('C3.15'); if(!ds.hasMethod('isGLCompositor')) return {pass:false, detail:'no isGLCompositor'}; var gl=ds.invoke('isGLCompositor'); return {pass:typeof gl === 'boolean', detail:'GL compositor: '+gl+' (#20)'}; },
-  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.3.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.3.0 performance accelerated (427 tests)'}; },
+  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-5.0.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v5.0.0 WASM App Store (427 tests)'}; },
   401: function(k){ if(!k.hw) return {pass:false, detail:'no HardwareBridge'}; if(typeof k.hw.isSAB !== 'function') return {pass:false, detail:'no isSAB'}; return {pass:true, detail:'HardwareBridge present; SAB='+k.hw.isSAB()+' (#1)'}; },
   402: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; k.hw.setMouseState(100, 200, 1); var s=k.hw.getMouseState(); return {pass:s.x===100&&s.y===200&&s.buttons===1, detail:'event coalescer: x='+s.x+' y='+s.y+' btn='+s.buttons+' (#18)'}; },
   403: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; var t=k.hw.getTimeOrigin(); return {pass:typeof t==='number'&&t>0, detail:'timeOrigin='+t+' (#13)'}; },
@@ -8465,7 +8465,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   417: function(k){ if(!k.wakeLock) return {pass:false, detail:'no wakeLock'}; return {pass:typeof k.wakeLock.request==='function', detail:'WakeLock present (#8)'}; },
   418: function(k){ if(!k.opfs) return {pass:false, detail:'no opfs'}; if(!k.transport) return {pass:false, detail:'no transport'}; if(!k.audio) return {pass:false, detail:'no audio'}; if(!k.simd) return {pass:false, detail:'no simd'}; return {pass:true, detail:'OPFS+WebTransport+Audio+SIMD present (#9+#10+#12+#16)'}; },
   419: function(k){ if(!k.boundary) return {pass:false, detail:'no boundary'}; if(!k.staticLinker) return {pass:false, detail:'no staticLinker'}; if(!k.gcFree) return {pass:false, detail:'no gcFree'}; return {pass:true, detail:'Boundary+StaticLinker+GCFree present (#2+#14+#15)'}; },
-  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.3.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.3.0 performance accelerated (427 tests)'}; },
+  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-5.0.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v5.0.0 WASM App Store (427 tests)'}; },
   421: function(k){ if(!k.wat) return {pass:false, detail:'no WATCompiler'}; if(typeof k.wat.compile !== 'function') return {pass:false, detail:'no compile'}; return {pass:true, detail:'WATCompiler present (wabt.js integration)'}; },
   422: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; return k.wat.init().then(function(ok){ return {pass:ok, detail:'wabt.js loaded: '+ok}; }).catch(function(e){ return {pass:false, detail:'init failed: '+e.message}; }); },
   423: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; var wat = '(module (func (export \"add\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))'; return k.wat.compile(wat).then(function(bytes){ if(!(bytes instanceof Uint8Array) || bytes.length < 8) return {pass:false, detail:'bytes invalid'}; return {pass:true, detail:'WAT compiled: '+bytes.length+' bytes'}; }).catch(function(e){ return {pass:false, detail:'compile failed: '+e.message}; }); },
@@ -10495,184 +10495,264 @@ Apps.appStore = function(){
   var id = 'appstore';
   if(WM.get(id)){ WM.focus(id); return; }
   var content = document.createElement('div');
-  content.style.cssText = 'display:flex;flex-direction:column;height:100%;background:#13131b;overflow-y:auto;padding:14px';
-  content.innerHTML = '<div style="font-size:11px;text-transform:uppercase;color:#6b7280;letter-spacing:.4px;margin-bottom:12px;font-weight:600">App Store — Sample Apps</div><div id="as-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px"></div>';
-  WM.create({id:id, title:'App Store', icon:'🛍️', width:560, height:440, content:content});
+  content.style.cssText = 'display:flex;flex-direction:column;height:100%;background:#13131b;overflow:hidden';
+  content.innerHTML =
+    '<div style="padding:14px 14px 8px;border-bottom:1px solid rgba(255,255,255,0.06)">'+
+      '<div style="font-size:11px;text-transform:uppercase;color:#6b7280;letter-spacing:.4px;font-weight:600;margin-bottom:10px">Zephyr App Store — WASM Apps</div>'+
+      '<div style="display:flex;gap:6px">'+
+        '<button class="btn sec as-tab" data-tab="store" style="font-size:11px;padding:6px 14px">Store</button>'+
+        '<button class="btn sec as-tab" data-tab="paste" style="font-size:11px;padding:6px 14px">Paste WAT Code</button>'+
+        '<button class="btn sec as-tab" data-tab="installed" style="font-size:11px;padding:6px 14px">Installed</button>'+
+      '</div>'+
+    '</div>'+
+    '<div id="as-content" style="flex:1;overflow-y:auto;padding:14px"></div>';
+  WM.create({id:id, title:'App Store', icon:'🛍️', width:620, height:520, content:content});
 
-  var storeApps = [
-    {
-      name:'Bouncing Ball', icon:'⚪', desc:'A ball bounces around the window. Demonstrates canvas rendering + the constrained app API.',
-      code: 'var x=50,y=50,dx=2,dy=1.5,r=10;\nfunction f(){\n  api.writePixel(x|0,y|0,0);\n  x+=dx;y+=dy;\n  if(x<r||x>api.getWidth()-r)dx=-dx;\n  if(y<r||y>api.getHeight()-r)dy=-dy;\n  var c=(255<<24)|(255<<16)|(100<<8)|50;\n  for(var i=-r;i<=r;i++)for(var j=-r;j<=r;j++)if(i*i+j*j<r*r)api.writePixel(x+i,y+j,c>>>0);\n  var e=api.pollInput();if(e)api.log("click:",e.x,e.y);\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Color Cycle', icon:'🌈', desc:'Animated rainbow color cycle across the canvas. Pure pixel art demo.',
-      code: 'var t=0;\nfunction f(){\n  var w=api.getWidth(),h=api.getHeight();\n  for(var y=0;y<h;y+=2){\n    for(var x=0;x<w;x+=2){\n      var hue=(t+x+y)%360;\n      var c=(255<<24)|((hue*2%255)<<16)|((hue*3%255)<<8)|(hue%255);\n      api.writePixel(x,y,c>>>0);\n    }\n  }\n  t+=2;\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Starfield', icon:'✨', desc:'Warp-speed starfield effect. Stars move toward you from the center.',
-      code: 'var stars=[];\nfor(var i=0;i<100;i++)stars.push({x:(Math.random()-0.5)*200,y:(Math.random()-0.5)*200,z:Math.random()*100});\nfunction f(){\n  var w=api.getWidth(),h=api.getHeight(),cx=w/2,cy=h/2;\n  for(var i=0;i<stars.length;i++){\n    var s=stars[i];\n    var px=(s.x/s.z*100+cx)|0,py=(s.y/s.z*100+cy)|0;\n    if(px>0&&px<w&&py>0&&py<h)api.writePixel(px,py,(255<<24)|(255<<16)|(255<<8)|255);\n    s.z-=2;\n    if(s.z<1){s.z=100;s.x=(Math.random()-0.5)*200;s.y=(Math.random()-0.5)*200}\n  }\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Matrix Rain', icon:'🟢', desc:'Classic Matrix digital rain effect with falling green characters.',
-      code: 'var w=api.getWidth(),h=api.getHeight();\nvar cols=Math.floor(w/8);\nvar drops=[];\nfor(var i=0;i<cols;i++)drops[i]=Math.random()*h;\nfunction f(){\n  for(var i=0;i<cols;i++){\n    var c=(255<<24)|(Math.random()*200<<8)|0;\n    api.writePixel(i*8,drops[i]|0,c>>>0);\n    drops[i]+=8;\n    if(drops[i]>h)drops[i]=0;\n  }\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Sine Waves', icon:'〰️', desc:'Layered sine waves in teal and amber. Smooth math visualization.',
-      code: 'var t=0;\nfunction f(){\n  var w=api.getWidth(),h=api.getHeight();\n  for(var x=0;x<w;x++){\n    var y1=h/2+Math.sin(x*0.05+t)*40;\n    var y2=h/2+Math.sin(x*0.03+t*1.3)*30;\n    api.writePixel(x,y1|0,(255<<24)|(255<<16)|0);\n    api.writePixel(x,y2|0,(255<<24)|(200<<8)|0);\n  }\n  t+=0.1;\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Plasma', icon:'🔥', desc:'Classic plasma effect with flowing color gradients.',
-      code: 'var t=0;\nfunction f(){\n  var w=api.getWidth(),h=api.getHeight();\n  for(var y=0;y<h;y+=3){\n    for(var x=0;x<w;x+=3){\n      var v=Math.sin(x*0.05+t)+Math.sin(y*0.05+t*1.3)+Math.sin((x+y)*0.04+t*0.7);\n      var hue=(v*60+180)%360;\n      var r=hue*2%255,g=hue%255,b=(hue*3)%255;\n      api.writePixel(x,y,((255<<24)|(b<<16)|(g<<8)|r)>>>0);\n    }\n  }\n  t+=0.05;\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Snake', icon:'🐍', desc:'Classic Snake game. Eat the red food, grow, don\'t hit yourself. Arrow keys or WASD.',
-      code: 'var grid=12,cols,rows,snake=[{x:10,y:10}],dir={x:1,y:0},food={x:15,y:10},score=0,dead=false,frame=0;\nfunction f(){\n  frame++;\n  var e=api.pollInput();\n  if(e&&e.type==="keydown"){\n    if(e.key===38||e.key===87)if(dir.y===0)dir={x:0,y:-1};\n    if(e.key===40||e.key===83)if(dir.y===0)dir={x:0,y:1};\n    if(e.key===37||e.key===65)if(dir.x===0)dir={x:-1,y:0};\n    if(e.key===39||e.key===68)if(dir.x===0)dir={x:1,y:0};\n  }\n  if(frame%8===0&&!dead){\n    var head={x:snake[0].x+dir.x,y:snake[0].y+dir.y};\n    if(head.x<0||head.y<0||head.x>=cols||head.y>=rows||snake.some(function(s){return s.x===head.x&&s.y===head.y})){dead=true;}\n    else{\n      snake.unshift(head);\n      if(head.x===food.x&&head.y===food.y){score++;food={x:Math.floor(Math.random()*cols),y:Math.floor(Math.random()*rows)};}\n      else snake.pop();\n    }\n  }\n  if(frame%3===0){\n    for(var y=0;y<rows;y++)for(var x=0;x<cols;x++)api.writePixel(x*grid,y*grid,(255<<24)|0);\n    snake.forEach(function(s){for(var i=0;i<grid-1;i++)for(var j=0;j<grid-1;j++)api.writePixel(s.x*grid+i,s.y*grid+j,(255<<24)|(255<<8)|0)});\n    for(var i=0;i<grid-1;i++)for(var j=0;j<grid-1;j++)api.writePixel(food.x*grid+i,food.y*grid+j,(255<<24)|255);\n  }\n  requestAnimationFrame(f);\n}\nsetTimeout(function(){cols=Math.floor(api.getWidth()/grid);rows=Math.floor(api.getHeight()/grid);f();},100);'
-    },
-    {
-      name:'Paint', icon:'🎨', desc:'Draw with your mouse! Click and drag to paint pixels. Demonstrates input handling.',
-      code: 'var painting=false,lastX=0,lastY=0,hue=0;\nfunction f(){\n  var e=api.pollInput();\n  if(e){\n    if(e.type==="mousedown"){painting=true;lastX=e.x;lastY=e.y;}\n    if(e.type==="mouseup")painting=false;\n    if(e.type==="mousemove"&&painting){\n      var dx=e.x-lastX,dy=e.y-lastY;\n      var steps=Math.max(Math.abs(dx),Math.abs(dy),1);\n      for(var i=0;i<=steps;i++){\n        var x=lastX+dx*i/steps|0,y=lastY+dy*i/steps|0;\n        var c=(255<<24)|((hue%255)<<16)|((hue*2%255)<<8)|(hue*3%255);\n        for(var r=-1;r<=1;r++)for(var c2=-1;c2<=1;c2++)api.writePixel(x+r,y+c2,c>>>0);\n      }\n      lastX=e.x;lastY=e.y;hue+=3;\n    }\n  }\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Clock', icon:'🕐', desc:'Analog clock with hour/minute/second hands. Shows the current time in real-time.',
-      code: 'function f(){\n  var w=api.getWidth(),h=api.getHeight(),cx=w/2|0,cy=h/2|0,r=Math.min(w,h)/2-5|0;\n  var now=new Date();\n  var sec=now.getSeconds(),min=now.getMinutes(),hr=now.getHours()%12;\n  // Clear\n  for(var y=0;y<h;y++)for(var x=0;x<w;x++)api.writePixel(x,y,0);\n  // Draw ring\n  for(var a=0;a<360;a+=2){\n    var rad=a*0.0174533;\n    var px=cx+Math.cos(rad)*r|0,py=cy+Math.sin(rad)*r|0;\n    api.writePixel(px,py,(255<<24)|(100<<16)|(200<<8)|100);\n  }\n  // Hour ticks\n  for(var i=0;i<12;i++){\n    var a=i*30*0.0174533;\n    for(var d=r-6;d<r;d++){\n      api.writePixel(cx+Math.cos(a)*d|0,cy+Math.sin(a)*d|0,(255<<24)|(255<<16)|0);\n    }\n  }\n  // Hour hand\n  var ha=((hr+min/60)*30-90)*0.0174533;\n  for(var d=0;d<r*0.5;d++)api.writePixel(cx+Math.cos(ha)*d|0,cy+Math.sin(ha)*d|0,(255<<24)|255);\n  // Minute hand\n  var ma=((min+sec/60)*6-90)*0.0174533;\n  for(var d=0;d<r*0.7;d++)api.writePixel(cx+Math.cos(ma)*d|0,cy+Math.sin(ma)*d|0,(255<<24)|(255<<8)|0);\n  // Second hand\n  var sa=(sec*6-90)*0.0174533;\n  for(var d=0;d<r*0.8;d++)api.writePixel(cx+Math.cos(sa)*d|0,cy+Math.sin(sa)*d|0,(255<<24)|255);\n  // Center dot\n  api.writePixel(cx,cy,(255<<24)|255);api.writePixel(cx+1,cy,(255<<24)|255);api.writePixel(cx,cy+1,(255<<24)|255);\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Minesweeper', icon:'💣', desc:'Classic Minesweeper. Click to reveal, right-click to flag. Find all safe cells without hitting a mine!',
-      code: 'var cell=16,cols,rows,grid,revealed,flags,dead=false,won=false,mines=15;\nfunction init(){\n  cols=Math.floor(api.getWidth()/cell);rows=Math.floor(api.getHeight()/cell);\n  grid=[];revealed=[];flags=[];\n  for(var y=0;y<rows;y++){grid[y]=[];revealed[y]=[];flags[y]=[];for(var x=0;x<cols;x++){grid[y][x]=0;revealed[y][x]=0;flags[y][x]=0}}\n  var placed=0;\n  while(placed<mines){var mx=Math.floor(Math.random()*cols),my=Math.floor(Math.random()*rows);if(grid[my][mx]!==9){grid[my][mx]=9;placed++}}\n  for(var y=0;y<rows;y++)for(var x=0;x<cols;x++){if(grid[y][x]===9)continue;var c=0;for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){var ny=y+dy,nx=x+dx;if(ny>=0&&ny<rows&&nx>=0&&nx<cols&&grid[ny][nx]===9)c++}grid[y][x]=c}\n}\nfunction reveal(x,y){\n  if(x<0||x>=cols||y<0||y>=rows||revealed[y][x]||flags[y][x])return;\n  revealed[y][x]=1;\n  if(grid[y][x]===9){dead=true;return}\n  if(grid[y][x]===0){for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++)reveal(x+dx,y+dy)}\n}\ninit();\nfunction f(){\n  var e=api.pollInput();\n  if(e&&!dead&&!won){\n    var cx=Math.floor(e.x/cell),cy=Math.floor(e.y/cell);\n    if(e.type==="mousedown"&&e.btn===0){reveal(cx,cy);}\n    if(e.type==="mousedown"&&e.btn===2){if(!revealed[cy][cx])flags[cy][cx]=flags[cy][cx]?0:1;}\n  }\n  // Check win\n  if(!dead&&!won){var safe=0;for(var y=0;y<rows;y++)for(var x=0;x<cols;x++)if(revealed[y][x]&&grid[y][x]!==9)safe++;if(safe>=cols*rows-mines)won=true}\n  // Render\n  for(var y=0;y<rows;y++)for(var x=0;x<cols;x++){\n    var px=x*cell,py=y*cell;\n    var bg=revealed[y][x]?(grid[y][x]===9?(255<<24)|255:(255<<24)|(40<<16)|(40<<8)|40):(255<<24)|(60<<16)|(60<<8)|60;\n    for(var dy=0;dy<cell-1;dy++)for(var dx=0;dx<cell-1;dx++)api.writePixel(px+dx,py+dy,bg>>>0);\n    if(revealed[y][x]&&grid[y][x]>0&&grid[y][x]<9){\n      var col=[0,(255<<8),(255<<16),(255<<24)|(255<<16)|(255<<8),255,(255<<16)|(255<<8),(255<<24)|255,0,(255<<8)|255][grid[y][x]]||(255<<8);\n      api.writePixel(px+4,py+8,(255<<24)|col);api.writePixel(px+5,py+8,(255<<24)|col);api.writePixel(px+6,py+8,(255<<24)|col);api.writePixel(px+5,py+7,(255<<24)|col);api.writePixel(px+5,py+9,(255<<24)|col);\n    }\n    if(flags[y][x]&&!revealed[y][x]){api.writePixel(px+7,py+4,(255<<24)|255);api.writePixel(px+7,py+5,(255<<24)|255);api.writePixel(px+7,py+6,(255<<24)|255);api.writePixel(px+8,py+6,(255<<24)|(255<<16)|0)}\n  }\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Fractal', icon:'🌀', desc:'Zoomable Mandelbrot set fractal. Click anywhere to zoom in. Beautiful infinite math visualization.',
-      code: 'var cx=-0.5,cy=0,zoom=1,w,h,maxIter=40;\nfunction f(){\n  w=api.getWidth();h=api.getHeight();\n  var e=api.pollInput();\n  if(e&&e.type==="mousedown"){cx=cx+(e.x/w-0.5)*3/zoom;cy=cy+(e.y/h-0.5)*3/zoom;zoom*=2;}\n  for(var py=0;py<h;py+=2)for(var px=0;px<w;px+=2){\n    var x0=cx+(px/w-0.5)*3/zoom,y0=cy+(py/h-0.5)*3/zoom,x=0,y=0,i=0;\n    while(x*x+y*y<4&&i<maxIter){var xt=x*x-y*y+x0;y=2*x*y+y0;x=xt;i++}\n    var col;\n    if(i===maxIter)col=0;\n    else{var h2=i*15%360;col=(255<<24)|((h2*2%255)<<16)|((h2%255)<<8)|((h2*3%255))}\n    api.writePixel(px,py,col>>>0);api.writePixel(px+1,py,col>>>0);api.writePixel(px,py+1,col>>>0);api.writePixel(px+1,py+1,col>>>0);\n  }\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Game of Life', icon:'🧬', desc:'Conway\'s Game of Life — cellular automaton. Cells live, die, and reproduce based on neighbors. Click to seed new cells.',
-      code: 'var cell=4,cols,rows,grid,next,frame=0;\nfunction init(){\n  cols=Math.floor(api.getWidth()/cell);rows=Math.floor(api.getHeight()/cell);\n  grid=[];next=[];\n  for(var y=0;y<rows;y++){grid[y]=[];next[y]=[];for(var x=0;x<cols;x++)grid[y][x]=Math.random()>0.7?1:0}\n}\ninit();\nfunction step(){\n  for(var y=0;y<rows;y++)for(var x=0;x<cols;x++){\n    var n=0;\n    for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){if(dx===0&&dy===0)continue;var ny=(y+dy+rows)%rows,nx=(x+dx+cols)%cols;if(grid[ny][nx])n++}\n    if(grid[y][x])next[y][x]=n===2||n===3?1:0;\n    else next[y][x]=n===3?1:0;\n  }\n  var t=grid;grid=next;next=t;\n}\nfunction f(){\n  frame++;\n  var e=api.pollInput();\n  if(e&&e.type==="mousedown"){var cx=Math.floor(e.x/cell),cy=Math.floor(e.y/cell);for(var dy=-2;dy<=2;dy++)for(var dx=-2;dx<=2;dx++){var ny=cy+dy,nx=cx+dx;if(ny>=0&&ny<rows&&nx>=0&&nx<cols)grid[ny][nx]=1;}}\n  if(frame%8===0)step();\n  for(var y=0;y<rows;y++)for(var x=0;x<cols;x++){\n    var col=grid[y][x]?(255<<24)|(255<<8)|0:0;\n    for(var dy=0;dy<cell;dy++)for(var dx=0;dx<cell;dx++)api.writePixel(x*cell+dx,y*cell+dy,col>>>0);\n  }\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Pong', icon:'🏓', desc:'Classic Pong vs AI. Move your paddle with the mouse. First to score wins!',
-      code: 'var w,h,paddleH=40,paddleW=4,ballX,ballY,bx,by,aiY,scoreP=0,scoreAI=0;\nfunction init(){w=api.getWidth();h=api.getHeight();ballX=w/2;ballY=h/2;bx=2;by=1.5;aiY=h/2-paddleH/2;}\ninit();\nfunction f(){\n  var e=api.pollInput();\n  var playerY=h/2-paddleH/2;\n  if(e&&e.type==="mousemove")playerY=Math.max(0,Math.min(h-paddleH,e.y-paddleH/2));\n  ballX+=bx;ballY+=by;\n  if(ballY<0||ballY>h)by=-by;\n  if(ballX<10&&ballY>playerY&&ballY<playerY+paddleH){bx=-bx*1.05;ballX=10;}\n  if(ballX>w-10&&ballY>aiY&&ballY<aiY+paddleH){bx=-bx*1.05;ballX=w-10;}\n  if(ballX<0){scoreAI++;init();}\n  if(ballX>w){scoreP++;init();}\n  aiY+=(ballY-paddleH/2-aiY)*0.08;\n  aiY=Math.max(0,Math.min(h-paddleH,aiY));\n  for(var y=0;y<h;y++)for(var x=0;x<w;x++)api.writePixel(x,y,0);\n  for(var i=0;i<paddleH;i++)for(var j=0;j<paddleW;j++)api.writePixel(6,playerY+i+j*0,(255<<24)|(255<<8)|0);\n  for(var i=0;i<paddleH;i++)for(var j=0;j<paddleW;j++)api.writePixel(w-10,aiY+i+j*0,(255<<24)|255);\n  api.writePixel(ballX|0,ballY|0,(255<<24)|255);api.writePixel((ballX|0)+1,ballY|0,(255<<24)|255);api.writePixel(ballX|0,(ballY|0)+1,(255<<24)|255);\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Breakout', icon:'🧱', desc:'Breakout brick breaker! Move paddle with mouse, bounce ball, destroy all bricks.',
-      code: 'var w,h,paddleX,ballX,ballY,bx,by,bricks,frame=0,lives=3;\nfunction init(){\n  w=api.getWidth();h=api.getHeight();paddleX=w/2;ballX=w/2;ballY=h-40;bx=1.5;by=-2;bricks=[];\n  for(var r=0;r<5;r++)for(var c=0;c<10;c++)bricks.push({x:c*40+5,y:r*15+10,w:35,h:12,alive:true});\n}\ninit();\nfunction f(){\n  frame++;\n  var e=api.pollInput();\n  if(e&&e.type==="mousemove")paddleX=Math.max(30,Math.min(w-30,e.x));\n  ballX+=bx;ballY+=by;\n  if(ballX<2||ballX>w-2)bx=-bx;\n  if(ballY<2)by=-by;\n  if(ballY>h-10&&ballX>paddleX-30&&ballX<paddleX+30){by=-Math.abs(by);}\n  if(ballY>h){lives--;if(lives<=0){init();lives=3;}else{ballX=w/2;ballY=h-40;bx=1.5;by=-2;}}\n  bricks.forEach(function(b){if(b.alive&&ballX>b.x&&ballX<b.x+b.w&&ballY>b.y&&ballY<b.y+b.h){b.alive=false;by=-by;}});\n  for(var y=0;y<h;y++)for(var x=0;x<w;x++)api.writePixel(x,y,0);\n  bricks.forEach(function(b){if(b.alive)for(var dy=0;dy<b.h;dy++)for(var dx=0;dx<b.w;dx++)api.writePixel(b.x+dx,b.y+dy,(255<<24)|(255<<16)|0);});\n  for(var dx=-30;dx<30;dx++)for(var dy=0;dy<4;dy++)api.writePixel(paddleX+dx|0,h-8+dy,(255<<24)|(255<<8)|0);\n  api.writePixel(ballX|0,ballY|0,(255<<24)|255);api.writePixel((ballX|0)+1,ballY|0,(255<<24)|255);api.writePixel(ballX|0,(ballY|0)+1,(255<<24)|255);\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Tetris', icon:'🎮', desc:'Classic Tetris! Arrow keys to move/rotate pieces. Clear lines to score. Left/Right move, Up rotates, Down drops.',
-      code: 'var cell=14,cols=10,rows=20,board,piece,x,y,shape,frame=0,score=0;\nvar shapes=[[[1,1,1,1]],[[1,1],[1,1]],[[0,1,0],[1,1,1]],[[1,0,0],[1,1,1]],[[0,0,1],[1,1,1]],[[1,1,0],[0,1,1]],[[0,1,1],[1,1,0]]];\nvar colors=[(255<<8),(255<<16)|255,(255<<16),(255<<24)|255,(255<<24)|(255<<16),255,(255<<8)|255];\nfunction newPiece(){var i=Math.floor(Math.random()*7);piece=shapes[i].map(function(r){return r.slice()});shape=i;x=3;y=0;}\nfunction init(){board=[];for(var r=0;r<rows;r++){board[r]=[];for(var c=0;c<cols;c++)board[r][c]=-1;}newPiece();}\nfunction collide(nx,ny,p){p=p||piece;for(var r=0;r<p.length;r++)for(var c=0;c<p[r].length;c++)if(p[r][c]&&(nx+c<0||nx+c>=cols||ny+r>=rows||(ny+r>=0&&board[ny+r][nx+c]>=0)))return true;return false;}\nfunction merge(){for(var r=0;r<piece.length;r++)for(var c=0;c<piece[r].length;c++)if(piece[r][c]&&y+r>=0)board[y+r][x+c]=shape;}\nfunction clearLines(){for(var r=rows-1;r>=0;r--){var full=true;for(var c=0;c<cols;c++)if(board[r][c]<0){full=false;break;}if(full){board.splice(r,1);board.unshift(new Array(cols).fill(-1));score+=10;r++;}}}\nfunction rotate(){var p=piece[0].map(function(_,i){return piece.map(function(row){return row[i]}).reverse()});if(!collide(x,y,p))piece=p;}\ninit();\nfunction f(){\n  frame++;\n  var e=api.pollInput();\n  if(e&&e.type==="keydown"){\n    if(e.key===37&&!collide(x-1,y))x--;\n    if(e.key===39&&!collide(x+1,y))x++;\n    if(e.key===38)rotate();\n    if(e.key===40){if(!collide(x,y+1))y++;else{merge();clearLines();newPiece();if(collide(x,y))init();}}\n  }\n  if(frame%30===0){if(!collide(x,y+1))y++;else{merge();clearLines();newPiece();if(collide(x,y))init();}}\n  for(var r=0;r<rows;r++)for(var c=0;c<cols;c++)for(var dy=0;dy<cell-1;dy++)for(var dx=0;dx<cell-1;dx++)api.writePixel(c*cell+dx,r*cell+dy,board[r][c]>=0?(255<<24)|colors[board[r][c]]>>>0:0);\n  for(var r=0;r<piece.length;r++)for(var c=0;c<piece[r].length;c++)if(piece[r][c])for(var dy=0;dy<cell-1;dy++)for(var dx=0;dx<cell-1;dx++)api.writePixel((x+c)*cell+dx,(y+r)*cell+dy,(255<<24)|colors[shape]>>>0);\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'3D Starfield', icon:'🌌', desc:'Perspective 3D starfield with depth. Stars zoom toward you from the center with size based on distance.',
-      code: 'var stars=[],w,h,cx,cy;\nfor(var i=0;i<150;i++)stars.push({x:(Math.random()-0.5)*2000,y:(Math.random()-0.5)*2000,z:Math.random()*1000+1,pz:0});\nfunction f(){\n  w=api.getWidth();h=api.getHeight();cx=w/2;cy=h/2;\n  for(var y=0;y<h;y+=2)for(var x=0;x<w;x+=2)api.writePixel(x,y,0);\n  for(var i=0;i<stars.length;i++){\n    var s=stars[i];\n    var sx=cx+(s.x/s.z*200),sy=cy+(s.y/s.z*200);\n    var size=Math.max(1,(1000-s.z)/300|0);\n    var bright=Math.min(255,(1000-s.z)/4);\n    var col=(255<<24)|(bright<<16)|(bright<<8)|bright;\n    for(var dy=0;dy<size;dy++)for(var dx=0;dx<size;dx++)if(sx+dx>0&&sx+dx<w&&sy+dy>0&&sy+dy<h)api.writePixel((sx+dx)|0,(sy+dy)|0,col>>>0);\n    s.z-=8;\n    if(s.z<1){s.z=1000;s.x=(Math.random()-0.5)*2000;s.y=(Math.random()-0.5)*2000;}\n  }\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Spirograph', icon:'🌀', desc:'Hypnotic spirograph patterns. Multiple rotating arms create intricate geometric curves. Click to change colors.',
-      code: 'var t=0,hue=0,w,h,cx,cy;\nfunction f(){\n  w=api.getWidth();h=api.getHeight();cx=w/2;cy=h/2;\n  var e=api.pollInput();\n  if(e&&e.type==="mousedown")hue=(hue+60)%360;\n  for(var i=0;i<60;i++){\n    var a=t*0.02+i*0.1;\n    var r1=80,r2=40;\n    var x=cx+Math.cos(a)*r1+Math.cos(a*7)*r2;\n    var y=cy+Math.sin(a)*r1+Math.sin(a*7)*r2;\n    var h2=(hue+i*3)%360;\n    var col=(255<<24)|((h2*2%255)<<16)|((h2%255)<<8)|((h2*3%255));\n    api.writePixel(x|0,y|0,col>>>0);\n    api.writePixel((x|0)+1,y|0,col>>>0);\n    api.writePixel(x|0,(y|0)+1,col>>>0);\n  }\n  t++;\n  if(t%200===0){for(var y=0;y<h;y+=2)for(var x=0;x<w;x+=2)api.writePixel(x,y,0);}\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'3D Cube', icon:'🎲', desc:'Rotating 3D wireframe cube with perspective projection. Spins on all 3 axes simultaneously.',
-      code: 'var verts=[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];\nvar edges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];\nvar ang=0,w,h;\nfunction f(){\n  w=api.getWidth();h=api.getHeight();\n  for(var y=0;y<h;y+=2)for(var x=0;x<w;x+=2)api.writePixel(x,y,0);\n  var projected=verts.map(function(v){\n    var x=v[0],y=v[1],z=v[2];\n    var x1=x*Math.cos(ang)-z*Math.sin(ang);var z1=x*Math.sin(ang)+z*Math.cos(ang);\n    var y2=y*Math.cos(ang*0.7)-z1*Math.sin(ang*0.7);var z2=y*Math.sin(ang*0.7)+z1*Math.cos(ang*0.7);\n    var x3=x1*Math.cos(ang*0.5)-y2*Math.sin(ang*0.5);var y3=x1*Math.sin(ang*0.5)+y2*Math.cos(ang*0.5);\n    var scale=150/(4+z2);\n    return[(w/2+x3*scale)|0,(h/2+y3*scale)|0];\n  });\n  edges.forEach(function(e){\n    var p1=projected[e[0]],p2=projected[e[1]];\n    var dx=p2[0]-p1[0],dy=p2[1]-p1[1];\n    var steps=Math.max(Math.abs(dx),Math.abs(dy),1);\n    for(var i=0;i<=steps;i++)api.writePixel(p1[0]+dx*i/steps|0,p1[1]+dy*i/steps|0,(255<<24)|(255<<8)|0);\n  });\n  projected.forEach(function(p){api.writePixel(p[0],p[1],(255<<24)|255);api.writePixel(p[0]+1,p[1],(255<<24)|255);api.writePixel(p[0],p[1]+1,(255<<24)|255);});\n  ang+=0.02;\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Lissajous', icon:'📊', desc:'Lissajous curve animation — beautiful math curves from harmonic motion. Ratio changes over time.',
-      code: 'var t=0,w,h,cx,cy;\nfunction f(){\n  w=api.getWidth();h=api.getHeight();cx=w/2;cy=h/2;\n  for(var y=0;y<h;y+=3)for(var x=0;x<w;x+=3)api.writePixel(x,y,0);\n  var a=3+Math.sin(t*0.01)*2,b=2+Math.cos(t*0.013)*2;\n  var A=Math.min(w,h)/2-20;\n  for(var i=0;i<360;i++){\n    var rad=i*0.0174533;\n    var x=cx+Math.sin(a*rad+t*0.02)*A;\n    var y=cy+Math.sin(b*rad)*A;\n    var hue=(i+t)%360;\n    var col=(255<<24)|((hue*2%255)<<16)|((hue%255)<<8)|((hue*3%255));\n    api.writePixel(x|0,y|0,col>>>0);\n    api.writePixel((x|0)+1,y|0,col>>>0);\n    api.writePixel(x|0,(y|0)+1,col>>>0);\n  }\n  t++;\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Fire', icon:'🔥', desc:'Procedural fire effect! Heat propagates upward from the bottom. Classic demoscene fire algorithm with palette mapping.',
-      code: 'var w,h,fire,buf;\nfunction init(){w=api.getWidth();h=api.getHeight();fire=new Uint8Array(w*h);buf=new Uint8Array(w*h);}\ninit();\nfunction palette(t){\n  if(t<64)return(255<<24)|(t*4<<16)|0;\n  if(t<128)return(255<<24)|255|((t-64)*4<<8);\n  if(t<192)return(255<<24)|255|255|((t-128)*4);\n  return(255<<24)|255|255|255;\n}\nfunction f(){\n  for(var x=0;x<w;x++)fire[(h-1)*w+x]=Math.random()>0.3?255:0;\n  for(var y=0;y<h-1;y++)for(var x=0;x<w;x++){\n    var s=Math.random()*3|0;var sx=(x+s-1+w)%w;\n    fire[y*w+x]=Math.max(0,fire[(y+1)*w+sx]-((Math.random()*3)|0));\n  }\n  for(var y=0;y<h;y++)for(var x=0;x<w;x++)api.writePixel(x,y,palette(fire[y*w+x])>>>0);\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Sierpinski', icon:'🔺', desc:'Sierpinski triangle fractal. Recursive subdivision creates an infinite self-similar pattern. Click to iterate deeper.',
-      code: 'var depth=5,w,h,frame=0;\nfunction drawTri(x1,y1,x2,y2,x3,y3,d){\n  if(d<=0){\n    var cx=(x1+x2+x3)/3|0,cy=(y1+y2+y3)/3|0;\n    api.writePixel(cx,cy,(255<<24)|(255<<8)|0);\n    for(var i=-1;i<=1;i++)for(var j=-1;j<=1;j++)api.writePixel(cx+i,cy+j,(255<<24)|(255<<8)|0);\n    return;\n  }\n  var mx1=(x1+x2)/2,my1=(y1+y2)/2,mx2=(x2+x3)/2,my2=(y2+y3)/2,mx3=(x1+x3)/2,my3=(y1+y3)/2;\n  drawTri(x1,y1,mx1,my1,mx3,my3,d-1);\n  drawTri(mx1,my1,x2,y2,mx2,my2,d-1);\n  drawTri(mx3,my3,mx2,my2,x3,y3,d-1);\n}\nfunction f(){\n  w=api.getWidth();h=api.getHeight();\n  for(var y=0;y<h;y+=2)for(var x=0;x<w;x+=2)api.writePixel(x,y,0);\n  var e=100;drawTri(w/2,e,w-e,h-e,w-e,h-e,depth);\n  frame++;\n  if(frame%120===0)depth=depth>=7?3:depth+1;\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Maze', icon:'🏓', desc:'Dot-eater maze game! Arrow keys to move. Eat all the yellow dots without hitting the red ghost. Classic arcade fun.',
-      code: 'var maze=[\"1111111111\",\"1000000001\",\"1011110101\",\"1000000001\",\"1010111101\",\"1010000001\",\"1011111101\",\"1000000001\",\"1111111111\"];\nvar cell=28,cols=10,rows=9,px=1,py=1,dx=0,dy=0,ndx=0,ndy=0,dots=0,score=0,ghost={x:8,y:1,dx:-1,dy:0};\nfunction init(){dots=0;for(var y=0;y<rows;y++)for(var x=0;x<cols;x++)if(maze[y][x]===\"0\")dots++;}\ninit();\nfunction f(){\n  var e=api.pollInput();\n  if(e&&e.type===\"keydown\"){\n    if(e.key===37){ndx=-1;ndy=0;}\n    if(e.key===39){ndx=1;ndy=0;}\n    if(e.key===38){ndx=0;ndy=-1;}\n    if(e.key===40){ndx=0;ndy=1;}\n  }\n  if(maze[py+ndy]&&maze[py+ndy][px+ndx]===\"0\"){dx=ndx;dy=ndy;}\n  if(maze[py+dy]&&maze[py+dy][px+dx]===\"0\"){px+=dx;py+=dy;}\n  if(maze[py]&&maze[py][px]===\"0\"){var row=maze[py].split(\"\");row[px]=\".\";maze[py]=row.join(\"\");score+=10;dots--;}\n  if(maze[ghost.y+ghost.dy]&&maze[ghost.y+ghost.dy][ghost.x+ghost.dx]===\"0\"){ghost.x+=ghost.dx;ghost.y+=ghost.dy;}\n  else{ghost.dx=Math.random()>0.5?1:-1;ghost.dy=0;if(Math.random()>0.7){ghost.dx=0;ghost.dy=Math.random()>0.5?1:-1;}}\n  if(ghost.x===px&&ghost.y===py){px=1;py=1;dx=0;dy=0;}\n  for(var y=0;y<rows;y++)for(var x=0;x<cols;x++){\n    var col=maze[y][x]===\"1\"?(255<<24)|(40<<16)|(40<<8)|40:maze[y][x]===\"0\"?(255<<24)|(200<<16)|(200<<8)|0:0;\n    for(var dy2=0;dy2<cell-1;dy2++)for(var dx2=0;dx2<cell-1;dx2++)api.writePixel(x*cell+dx2,y*cell+dy2,col>>>0);\n    if(maze[y][x]===\"0\")api.writePixel(x*cell+cell/2|0,y*cell+cell/2|0,(255<<24)|(255<<16)|0);\n  }\n  for(var dy2=0;dy2<cell-3;dy2++)for(var dx2=0;dx2<cell-3;dx2++)api.writePixel(px*cell+1+dx2,py*cell+1+dy2,(255<<24)|(255<<8)|0);\n  for(var dy2=0;dy2<cell-3;dy2++)for(var dx2=0;dx2<cell-3;dx2++)api.writePixel(ghost.x*cell+1+dx2,ghost.y*cell+1+dy2,(255<<24)|255);\n  if(dots<=0)init();\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'N-body', icon:'🪐', desc:'N-body gravity simulation. Particles attract each other with inverse-square gravity. Watch them orbit, cluster, and dance.',
-      code: 'var bodies=[],w,h;\nfor(var i=0;i<40;i++)bodies.push({x:Math.random()*400,y:Math.random()*300,vx:(Math.random()-0.5)*0.5,vy:(Math.random()-0.5)*0.5,m:Math.random()*3+1});\nfunction f(){\n  w=api.getWidth();h=api.getHeight();\n  for(var y=0;y<h;y+=2)for(var x=0;x<w;x+=2)api.writePixel(x,y,0);\n  for(var i=0;i<bodies.length;i++)for(var j=i+1;j<bodies.length;j++){\n    var a=bodies[i],b=bodies[j];var dx=b.x-a.x,dy=b.y-a.y;var d2=dx*dx+dy*dy+10;var f=0.5/d2;var dn=Math.sqrt(d2);\n    a.vx+=dx/dn*f*b.m;b.vx-=dx/dn*f*a.m;a.vy+=dy/dn*f*b.m;b.vy-=dy/dn*f*a.m;\n  }\n  for(var i=0;i<bodies.length;i++){\n    var b=bodies[i];b.x+=b.vx;b.y+=b.vy;\n    if(b.x<0){b.x=0;b.vx*=-0.8;}if(b.x>w){b.x=w;b.vx*=-0.8;}\n    if(b.y<0){b.y=0;b.vy*=-0.8;}if(b.y>h){b.y=h;b.vy*=-0.8;}\n    var hue=(i*9)%360;var col=(255<<24)|((hue*2%255)<<16)|((hue%255)<<8)|((hue*3%255));\n    var sz=Math.min(4,b.m|0);\n    for(var dy=0;dy<sz;dy++)for(var dx=0;dx<sz;dx++)api.writePixel((b.x+dx)|0,(b.y+dy)|0,col>>>0);\n  }\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Voronoi', icon:'🕸️', desc:'Voronoi diagram! Each pixel is colored by its nearest seed point. Seeds drift, creating flowing cellular patterns.',
-      code: 'var seeds=[],w,h;\nfor(var i=0;i<12;i++)seeds.push({x:Math.random()*400,y:Math.random()*300,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,hue:Math.random()*360});\nfunction f(){\n  w=api.getWidth();h=api.getHeight();\n  for(var s=0;s<seeds.length;s++){seeds[s].x+=seeds[s].vx;seeds[s].y+=seeds[s].vy;if(seeds[s].x<0||seeds[s].x>w)seeds[s].vx*=-1;if(seeds[s].y<0||seeds[s].y>h)seeds[s].vy*=-1;}\n  for(var y=0;y<h;y+=3)for(var x=0;x<w;x+=3){\n    var best=0,bd=1e9;\n    for(var s=0;s<seeds.length;s++){var dx=seeds[s].x-x,dy=seeds[s].y-y;var d=dx*dx+dy*dy;if(d<bd){bd=d;best=s;}}\n    var hue=seeds[best].hue;var col=(255<<24)|((hue*2%255)<<16)|((hue%255)<<8)|((hue*3%255));\n    api.writePixel(x,y,col>>>0);api.writePixel(x+1,y,col>>>0);api.writePixel(x,y+1,col>>>0);api.writePixel(x+1,y+1,col>>>0);\n  }\n  for(var s=0;s<seeds.length;s++)api.writePixel(seeds[s].x|0,seeds[s].y|0,(255<<24)|255);\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:"Langton's Ant", icon:'🐜', desc:"Langton's Ant cellular automaton. A simple ant with 2 rules creates emergent complexity. Watch highways form!",
-      code: 'var cell=3,w,h,cols,rows,grid,x,y,dir,steps=0;\nfunction init(){w=api.getWidth();h=api.getHeight();cols=Math.floor(w/cell);rows=Math.floor(h/cell);grid=new Uint8Array(cols*rows);x=cols/2|0;y=rows/2|0;dir=0;}\ninit();\nfunction f(){\n  for(var s=0;s<100;s++){\n    var idx=y*cols+x;\n    if(grid[idx]){dir=(dir+3)%4;grid[idx]=0;}\n    else{dir=(dir+1)%4;grid[idx]=1;}\n    if(dir===0)x++;if(dir===1)y++;if(dir===2)x--;if(dir===3)y--;\n    if(x<0)x=cols-1;if(x>=cols)x=0;if(y<0)y=rows-1;if(y>=rows)y=0;\n    steps++;\n  }\n  for(var yy=0;yy<rows;yy++)for(var xx=0;xx<cols;xx++){\n    var c=grid[yy*cols+xx]?(255<<24)|255:0;\n    for(var dy=0;dy<cell;dy++)for(var dx=0;dx<cell;dx++)api.writePixel(xx*cell+dx,yy*cell+dy,c>>>0);\n  }\n  api.writePixel(x*cell,y*cell,(255<<24)|255);\n  api.writePixel(x*cell+1,y*cell,(255<<24)|255);\n  api.writePixel(x*cell,y*cell+1,(255<<24)|255);\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'Reaction Diffusion', icon:'🧪', desc:'Gray-Scott reaction-diffusion. Turing patterns emerge from simple chemical rules. Spots, stripes, and coral!',
-      code: 'var w,h,cols,rows,U,V,nextU,nextV,cell=3;\nfunction init(){w=api.getWidth();h=api.getHeight();cols=Math.floor(w/cell);rows=Math.floor(h/cell);U=new Float32Array(cols*rows);V=new Float32Array(cols*rows);nextU=new Float32Array(cols*rows);nextV=new Float32Array(cols*rows);\nfor(var y=0;y<rows;y++)for(var x=0;x<cols;x++){U[y*cols+x]=1;V[y*cols+x]=0;}\nfor(var i=0;i<5;i++){var sx=Math.floor(Math.random()*cols),sy=Math.floor(Math.random()*rows);for(var dy=-3;dy<=3;dy++)for(var dx=-3;dx<=3;dx++){var nx=sx+dx,ny=sy+dy;if(nx>=0&&nx<cols&&ny>=0&&ny<rows){U[ny*cols+nx]=0.5;V[ny*cols+nx]=0.25;}}}}\ninit();\nvar dU=0.2097,dV=0.105,f=0.037,k=0.06;\nfunction f(){\n  for(var s=0;s<8;s++){\n    for(var y=1;y<rows-1;y++)for(var x=1;x<cols-1;x++){\n      var i=y*cols+x;\n      var u=U[i],v=V[i];\n      var lapU=U[i-1]+U[i+1]+U[i-cols]+U[i+cols]-4*u;\n      var lapV=V[i-1]+V[i+1]+V[i-cols]+V[i+cols]-4*v;\n      nextU[i]=u+(dU*lapU-u*v*v+f*(1-u));\n      nextV[i]=v+(dV*lapV+u*v*v-(f+k)*v);\n    }\n    var tU=U;U=nextU;nextU=tU;var tV=V;V=nextV;nextV=tV;\n  }\n  for(var y=0;y<rows;y++)for(var x=0;x<cols;x++){\n    var v=V[y*cols+x];var b=Math.min(255,v*600)|0;\n    var col=(255<<24)|(b<<16)|(b<<8)|b;\n    for(var dy=0;dy<cell;dy++)for(var dx=0;dx<cell;dx++)api.writePixel(x*cell+dx,y*cell+dy,col>>>0);\n  }\n  requestAnimationFrame(f);\n}\nf();'
-    },
-    {
-      name:'3D Terrain', icon:'⛰️', desc:'Procedural 3D terrain renderer. Heightmap generated with noise, rendered as a wireframe landscape that rotates.',
-      code: 'var ang=0,w,h;\nfunction noise(x,y){var n=Math.sin(x*12.9898+y*78.233)*43758.5453;return n-Math.floor(n);}\nfunction smoothNoise(x,y){var total=0;for(var i=0;i<4;i++)total+=noise(x/30+i*7,y/30+i*13)*Math.pow(0.5,i);return total;}\nfunction f(){\n  w=api.getWidth();h=api.getHeight();\n  for(var y=0;y<h;y+=2)for(var x=0;x<w;x+=2)api.writePixel(x,y,0);\n  var cols=24,rows=18,cx=w/2,cy=h/2;\n  var heights=[];\n  for(var y=0;y<rows;y++){heights[y]=[];for(var x=0;x<cols;x++){var nx=x/cols*4,ny=y/rows*4;heights[y][x]=smoothNoise(nx+Math.cos(ang)*2,ny+Math.sin(ang)*2)*60;}}\n  var scale=16;\n  for(var y=0;y<rows-1;y++)for(var x=0;x<cols-1;x++){\n    var sx=x-cols/2,sy=y-rows/2;\n    var rx=(sx*Math.cos(ang)-sy*Math.sin(ang))*scale;\n    var ry=(sx*Math.sin(ang)+sy*Math.cos(ang))*scale;\n    var px=cx+rx|0,py=cy+ry-heights[y][x]|0;\n    var px2=cx+((x+1-cols/2)*Math.cos(ang)-sy*Math.sin(ang))*scale|0;\n    var py2=cy+((x+1-cols/2)*Math.sin(ang)+sy*Math.cos(ang))*scale-heights[y][x+1]|0;\n    var dx=px2-px,dy=py2-py,st=Math.max(Math.abs(dx),Math.abs(dy),1);\n    var ht=heights[y][x];\n    var col=ht>40?(255<<24)|(60<<16)|(120<<8)|60:ht>20?(255<<24)|(40<<16)|(80<<8)|40:(255<<24)|(20<<16)|(40<<8)|20;\n    for(var i=0;i<=st;i++)api.writePixel(px+dx*i/st|0,py+dy*i/st|0,col>>>0);\n    var px3=cx+rx|0,py3=cy+ry-heights[y+1][x]|0;\n    py3=cy+((x-cols/2)*Math.sin(ang)+(y+1-rows/2)*Math.cos(ang))*scale-heights[y+1][x]|0;\n    px3=cx+((x-cols/2)*Math.cos(ang)-(y+1-rows/2)*Math.sin(ang))*scale|0;\n    var dx2=px3-px,dy2=py3-py,st2=Math.max(Math.abs(dx2),Math.abs(dy2),1);\n    for(var i=0;i<=st2;i++)api.writePixel(px+dx2*i/st2|0,py+dy2*i/st2|0,col>>>0);\n  }\n  ang+=0.01;\n  requestAnimationFrame(f);\n}\nf();'
+  var contentEl = document.getElementById('as-content');
+
+  var PERM = {
+    WRITE_PIXEL: 1 << 0, GET_WIDTH: 1 << 1, GET_HEIGHT: 1 << 2,
+    CLEAR: 1 << 3, GET_TICKS: 1 << 4, POLL_INPUT: 1 << 5, LOG: 1 << 6
+  };
+  var DEFAULT_PERMS = PERM.WRITE_PIXEL | PERM.GET_WIDTH | PERM.GET_HEIGHT | PERM.CLEAR | PERM.GET_TICKS | PERM.POLL_INPUT;
+
+  function launchWATApp(appName, watSource, perms){
+    var winId = 'wat-' + appName + '-' + Date.now();
+    var mask = DEFAULT_PERMS;
+
+    var content = document.createElement('div');
+    content.style.cssText = 'display:flex;flex-direction:column;height:100%;background:#0a0a12';
+    var bar = document.createElement('div');
+    bar.style.cssText = 'padding:6px 10px;background:#0f0f17;border-bottom:1px solid rgba(16,185,129,0.2);font-size:11px;color:#6ee7b7;display:flex;justify-content:space-between;align-items:center';
+    bar.innerHTML = '<span>⚡ '+C2.string.escapeHtml(appName)+'</span><span id="wat-status-'+winId+'" style="color:#9ca3af">compiling...</span>';
+    content.appendChild(bar);
+
+    var canvasEl = document.createElement('canvas');
+    canvasEl.width = 400; canvasEl.height = 300;
+    canvasEl.style.cssText = 'display:block;image-rendering:pixelated;width:100%;flex:1;background:#0a0a12';
+    content.appendChild(canvasEl);
+    content.tabIndex = 0;
+
+    var logDiv = document.createElement('div');
+    logDiv.style.cssText = 'padding:4px 10px;font-family:monospace;font-size:10px;color:#6ee7b7;background:#0f0f17;border-top:1px solid rgba(255,255,255,0.05);max-height:60px;overflow-y:auto';
+    content.appendChild(logDiv);
+
+    WM.create({id:winId, title:appName+' (WAT)', icon:'⚡', width:440, height:400, content:content});
+
+    var statusEl = document.getElementById('wat-status-'+winId);
+    var cctx = canvasEl.getContext('2d');
+    var imgData = cctx.createImageData(canvasEl.width, canvasEl.height);
+    var u32 = new Uint32Array(imgData.data.buffer);
+    u32.fill(0xFF0A0A12);
+    cctx.putImageData(imgData, 0, 0);
+
+    var inputQueue = [];
+    canvasEl.addEventListener('mousedown', function(e){ var r = canvasEl.getBoundingClientRect(); inputQueue.push({type:'mousedown', x:((e.clientX-r.left)/r.width*canvasEl.width)|0, y:((e.clientY-r.top)/r.height*canvasEl.height)|0, btn:e.button, key:0}); });
+    canvasEl.addEventListener('mousemove', function(e){ var r = canvasEl.getBoundingClientRect(); inputQueue.push({type:'mousemove', x:((e.clientX-r.left)/r.width*canvasEl.width)|0, y:((e.clientY-r.top)/r.height*canvasEl.height)|0, btn:0, key:0}); });
+    canvasEl.addEventListener('keydown', function(e){ inputQueue.push({type:'keydown', x:0, y:0, btn:0, key:e.keyCode}); e.preventDefault(); });
+
+    var _dirty = false;
+    var _running = false;
+    var _rafId = null;
+    var _heartbeat = 0;
+    var _lastHeartbeat = 0;
+
+    var env = {
+      write_pixel: function(x, y, abgr){
+        x = x|0; y = y|0;
+        if(x<0||x>=canvasEl.width||y<0||y>=canvasEl.height) return;
+        u32[y * canvasEl.width + x] = abgr >>> 0;
+        _dirty = true;
+        _heartbeat++;
+      },
+      get_width: function(){ return canvasEl.width; },
+      get_height: function(){ return canvasEl.height; },
+      clear: function(color){ u32.fill(color >>> 0); _dirty = true; _heartbeat += 100; },
+      get_ticks: function(){ return (Date.now() & 0x7FFFFFFF) | 0; },
+      poll_input: function(){ return inputQueue.length > 0 ? 1 : 0; },
+      log: function(){ var args = Array.prototype.slice.call(arguments); logDiv.innerHTML = C2.string.escapeHtml(args.join(' ')) + '<br>' + logDiv.innerHTML; }
+    };
+
+    function compileAndRun(){
+      if(typeof WabtModule === 'undefined'){
+        statusEl.textContent = 'loading wabt.js...';
+        var waitInterval = setInterval(function(){
+          if(typeof WabtModule !== 'undefined'){
+            clearInterval(waitInterval);
+            compileAndRun();
+          }
+        }, 200);
+        return;
+      }
+      WabtModule().then(function(wabt){
+        try{
+          var mod = wabt.parseWat(appName+'.wat', watSource);
+          mod.resolveNames();
+          mod.validate();
+          var bin = mod.toBinary({write_debug_names: false});
+          mod.destroy();
+          var bytes = new Uint8Array(bin.buffer);
+          var compiled = new WebAssembly.Module(bytes);
+          var inst = new WebAssembly.Instance(compiled, {env: env});
+
+          statusEl.textContent = 'running';
+          statusEl.style.color = '#10b981';
+          _running = true;
+
+          if(typeof inst.exports.init === 'function'){
+            try{ inst.exports.init(); }catch(e){ logDiv.innerHTML = '<span style="color:#ef4444">init: '+C2.string.escapeHtml(e.message)+'</span>'; }
+          }
+
+          if(typeof inst.exports.frame !== 'function'){
+            statusEl.textContent = 'no frame() export';
+            statusEl.style.color = '#f59e0b';
+            return;
+          }
+
+          var t = 0;
+          function frame(){
+            if(!_running) return;
+            t++;
+            _heartbeat = 0;
+            try{ inst.exports.frame(t); }
+            catch(e){
+              statusEl.textContent = 'crashed';
+              statusEl.style.color = '#ef4444';
+              _running = false;
+              logDiv.innerHTML = '<span style="color:#ef4444">CRASH: '+C2.string.escapeHtml(e.message)+'</span>';
+              return;
+            }
+            if(_dirty){ cctx.putImageData(imgData, 0, 0); _dirty = false; }
+            _rafId = requestAnimationFrame(frame);
+          }
+          frame();
+
+          // Watchdog: check every 5s if app is alive
+          setInterval(function(){
+            if(!_running) return;
+            if(_heartbeat === _lastHeartbeat){
+              statusEl.textContent = 'watchdog: idle';
+              statusEl.style.color = '#f59e0b';
+            }
+            _lastHeartbeat = _heartbeat;
+          }, 5000);
+
+        }catch(e){
+          statusEl.textContent = 'compile error';
+          statusEl.style.color = '#ef4444';
+          logDiv.innerHTML = '<span style="color:#ef4444">'+C2.string.escapeHtml(e.message)+'</span>';
+        }
+      }).catch(function(e){
+        statusEl.textContent = 'wabt failed';
+        statusEl.style.color = '#ef4444';
+      });
     }
-    ,
+
+    var win = WM.get(winId);
+    if(win){
+      win.onClose = function(){
+        _running = false;
+        if(_rafId) cancelAnimationFrame(_rafId);
+      };
+    }
+    compileAndRun();
+  }
+
+  var watApps = [
     {
-      name:'WASM Bouncing Ball', icon:'⚡', desc:'Real WebAssembly! Hand-encoded WASM module compiled at runtime, instantiated with an env import object. frame(t) is called per rAF.',
-      wasm: true
+      name: 'Bouncing Ball', icon: '⚪', desc: 'A green ball bounces around. Classic WASM demo.',
+      wat: '(module\n  (import "env" "write_pixel" (func $wp (param i32 i32 i32)))\n  (import "env" "get_width" (func $gw (result i32)))\n  (import "env" "get_height" (func $gh (result i32)))\n  (import "env" "clear" (func $clear (param i32)))\n  (global $x (mut i32) (i32.const 10))\n  (global $y (mut i32) (i32.const 10))\n  (global $dx (mut i32) (i32.const 2))\n  (global $dy (mut i32) (i32.const 1))\n  (func (export "frame") (param $t i32)\n    (call $clear (i32.const -16777262))\n    (global.set $x (i32.add (global.get $x) (global.get $dx)))\n    (global.set $y (i32.add (global.get $y) (global.get $dy)))\n    (if (i32.lt_s (global.get $x) (i32.const 0)) (then (global.set $dx (i32.const 2))))\n    (if (i32.ge_s (global.get $x) (call $gw)) (then (global.set $dx (i32.const -2))))\n    (if (i32.lt_s (global.get $y) (i32.const 0)) (then (global.set $dy (i32.const 1))))\n    (if (i32.ge_s (global.get $y) (call $gh)) (then (global.set $dy (i32.const -1))))\n    (call $wp (global.get $x) (global.get $y) (i32.const -16711936))\n    (call $wp (i32.add (global.get $x) (i32.const 1)) (global.get $y) (i32.const -16711936))\n    (call $wp (global.get $x) (i32.add (global.get $y) (i32.const 1)) (i32.const -16711936))\n    (call $wp (i32.add (global.get $x) (i32.const 1)) (i32.add (global.get $y) (i32.const 1)) (i32.const -16711936))\n  )\n)',
+      perms: ['write_pixel','get_width','get_height','clear']
     },
     {
-      name:'WASM Worker Demo', icon:'\uD83C\uDFED', desc:'Real WebAssembly running in a Web Worker! Off-main-thread execution. The shell stays responsive even if the WASM app does heavy computation.',
-      wasm: true, worker: true
+      name: 'Plasma', icon: '🔥', desc: 'Colorful plasma effect using sine waves.',
+      wat: '(module\n  (import "env" "write_pixel" (func $wp (param i32 i32 i32)))\n  (import "env" "get_width" (func $gw (result i32)))\n  (import "env" "get_height" (func $gh (result i32)))\n  (func (export "frame") (param $t i32)\n    (local $x i32) (local $y i32) (local $c i32)\n    (local.set $y (i32.const 0))\n    (block $done (loop $row\n      (br_if $done (i32.ge_s (local.get $y) (call $gh)))\n      (local.set $x (i32.const 0))\n      (loop $col\n        (if (i32.lt_s (local.get $x) (call $gw))\n          (then\n            (local.set $c (i32.xor (i32.const -16777216)\n              (i32.or (i32.shl (i32.rem_u (i32.add (i32.add (local.get $t) (local.get $x)) (local.get $y)) (i32.const 255)) (i32.const 16))\n              (i32.rem_u (i32.mul (i32.add (i32.add (local.get $t) (local.get $x)) (local.get $y)) (i32.const 3)) (i32.const 255)))))\n            (call $wp (local.get $x) (local.get $y) (local.get $c))\n            (local.set $x (i32.add (local.get $x) (i32.const 4)))\n            (br $col))))\n      (local.set $y (i32.add (local.get $y) (i32.const 4)))\n      (br $row)))\n  )\n)',
+      perms: ['write_pixel','get_width','get_height']
+    },
+    {
+      name: 'Static', icon: '📺', desc: 'TV static noise. Pure random pixels every frame.',
+      wat: '(module\n  (import "env" "write_pixel" (func $wp (param i32 i32 i32)))\n  (import "env" "get_width" (func $gw (result i32)))\n  (import "env" "get_height" (func $gh (result i32)))\n  (import "env" "clear" (func $clear (param i32)))\n  (func (export "frame") (param $t i32)\n    (local $i i32)\n    (call $clear (i32.const -16777216))\n    (local.set $i (i32.const 0))\n    (loop $loop\n      (if (i32.lt_s (local.get $i) (i32.const 500))\n        (then\n          (call $wp\n            (i32.rem_u (i32.mul (local.get $t) (i32.const 7)) (call $gw))\n            (i32.rem_u (i32.mul (local.get $t) (i32.const 13)) (call $gh))\n            (i32.xor (i32.const -16777216) (i32.mul (local.get $t) (i32.const 2654435761))))\n          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n          (br $loop))))\n  )\n)',
+      perms: ['write_pixel','get_width','get_height','clear']
     }
   ];
 
-  var grid = document.getElementById('as-grid');
-  storeApps.forEach(function(app){
-    var card = document.createElement('div');
-    card.style.cssText = 'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:14px;transition:border .15s';
-    card.innerHTML =
-      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
-        '<span style="font-size:24px">'+app.icon+'</span>'+
-        '<span style="font-size:13px;font-weight:600;color:#e5e7eb">'+app.name+'</span>'+
+  function renderStore(){
+    contentEl.innerHTML = '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Click an app to compile its WAT source and run it instantly via wabt.js.</div><div id="as-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px"></div>';
+    var grid = document.getElementById('as-grid');
+    watApps.forEach(function(app){
+      var card = document.createElement('div');
+      card.style.cssText = 'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:14px;transition:border .15s;cursor:pointer';
+      card.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:24px">'+app.icon+'</span><span style="font-size:13px;font-weight:600;color:#e5e7eb">'+C2.string.escapeHtml(app.name)+'</span></div><div style="font-size:10px;color:#9ca3af;line-height:1.5;margin-bottom:10px;height:36px;overflow:hidden">'+C2.string.escapeHtml(app.desc)+'</div><div style="display:flex;gap:4px"><span style="font-size:9px;padding:2px 6px;background:rgba(16,185,129,0.15);color:#10b981;border-radius:3px">WAT</span><span style="font-size:9px;padding:2px 6px;background:rgba(99,102,241,0.15);color:#818cf8;border-radius:3px">'+app.perms.length+' perms</span></div>';
+      card.addEventListener('click', function(){
+        var wat = app.wat.replace(/\\n/g, '\n');
+        launchWATApp(app.name, wat, app.perms);
+        Toast.success('Launching WAT app: '+app.name, 2000);
+      });
+      card.addEventListener('mouseenter', function(){ card.style.borderColor = 'rgba(16,185,129,0.3)'; });
+      card.addEventListener('mouseleave', function(){ card.style.borderColor = 'rgba(255,255,255,0.06)'; });
+      grid.appendChild(card);
+    });
+  }
+
+  function renderPaste(){
+    contentEl.innerHTML =
+      '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Paste WAT (WebAssembly Text) source code. Must export <code style="color:#10b981">frame(t)</code> and import from <code style="color:#10b981">env</code>.</div>'+
+      '<div style="font-size:11px;color:#6b7280;margin-bottom:8px;line-height:1.6">'+
+        '<div style="font-weight:600;color:#9ca3af;margin-bottom:4px">Available imports (env.*):</div>'+
+        '<div><code style="color:#818cf8">write_pixel</code>(x, y, abgr) · <code style="color:#818cf8">get_width</code>() → i32 · <code style="color:#818cf8">get_height</code>() → i32</div>'+
+        '<div><code style="color:#818cf8">clear</code>(color) · <code style="color:#818cf8">get_ticks</code>() → i32 · <code style="color:#818cf8">poll_input</code>() → i32</div>'+
       '</div>'+
-      '<div style="font-size:10px;color:#9ca3af;line-height:1.5;margin-bottom:10px;height:42px;overflow:hidden">'+app.desc+'</div>'+
-      '<div style="display:flex;gap:6px">'+
-        '<button class="btn as-install" style="font-size:10px;padding:5px 10px;flex:1">Install & Launch</button>'+
-        '<button class="btn sec as-widget" style="font-size:10px;padding:5px 8px" title="Run as always-on-top widget (no titlebar)">📌 Widget</button>'+
-        '<button class="btn sec as-code" style="font-size:10px;padding:5px 8px">View code</button>'+
-      '</div>';
-    card.querySelector('.as-install').addEventListener('click', function(){
+      '<input id="as-paste-name" type="text" placeholder="App name" style="width:100%;padding:8px 10px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e5e7eb;font-size:12px;margin-bottom:8px">'+
+      '<textarea id="as-paste-code" placeholder="(module\n  (import \"env\" \"write_pixel\" (func $wp (param i32 i32 i32)))\n  (import \"env\" \"get_width\" (func $gw (result i32)))\n  (import \"env\" \"get_height\" (func $gh (result i32)))\n  (import \"env\" \"clear\" (func $clear (param i32)))\n\n  (func (export \"frame\") (param $t i32)\n    (call $clear (i32.const -16777262))\n    (call $wp (i32.const 50) (i32.const 50) (i32.const -16711936))\n  )\n)" style="width:100%;height:220px;padding:10px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#a8ffa8;font-family:monospace;font-size:11px;line-height:1.5;resize:vertical;margin-bottom:10px"></textarea>'+
+      '<button class="btn pass" id="as-paste-run" style="width:100%;padding:10px;font-size:13px">▶ Compile & Run</button>'+
+      '<div id="as-paste-status" style="margin-top:8px;font-size:11px"></div>';
+
+    document.getElementById('as-paste-run').addEventListener('click', function(){
+      var name = document.getElementById('as-paste-name').value.trim() || 'Custom WAT App';
+      var code = document.getElementById('as-paste-code').value.trim();
+      var statusEl = document.getElementById('as-paste-status');
+      if(!code){ statusEl.innerHTML = '<span style="color:#ef4444">Please paste WAT source code</span>'; return; }
+      statusEl.innerHTML = '<span style="color:#f59e0b">Compiling...</span>';
       try{
-        if(app.wasm && app.worker){
-          Apps.launchWasmWorkerApp(app.name);
-          Toast.success('WASM Worker app launched: '+app.name, 2500);
-        } else if(app.wasm){
-          Apps.launchWasmApp(app.name);
-          Toast.success('WASM app launched: '+app.name, 2500);
-        } else {
-          Kernel.syscall.invoke('C3.12', 'registerApp', app.name, app.code);
-          try{ Kernel.saveApps(); }catch(e){}
-          Desktop.rebuild();
-          StartMenu.rebuild();
-          Apps.launchCustom(app.name);
-          Toast.success('Installed & launched: '+app.name, 2500);
-        }
-      }catch(e){ Toast.error('Install failed: '+e.message, 4000); }
+        launchWATApp(name, code, ['write_pixel','get_width','get_height','clear','get_ticks']);
+        statusEl.innerHTML = '<span style="color:#10b981">App launched!</span>';
+        Toast.success('WAT app compiled and launched: '+name, 3000);
+      }catch(e){
+        statusEl.innerHTML = '<span style="color:#ef4444">Error: '+C2.string.escapeHtml(e.message)+'</span>';
+      }
     });
-    card.querySelector('.as-widget').addEventListener('click', function(){
-      try{
-        Kernel.syscall.invoke('C3.12', 'registerApp', app.name, app.code);
-        Desktop.rebuild();
-        StartMenu.rebuild();
-        Apps.launchWidget(app.name);
-        Toast.success('Widget launched: '+app.name, 2500);
-      }catch(e){ Toast.error('Widget launch failed: '+e.message, 4000); }
+  }
+
+  function renderInstalled(){
+    var installed = Kernel.manifests ? Kernel.manifests.list() : [];
+    if(installed.length === 0){
+      contentEl.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#6b7280"><div style="font-size:48px;margin-bottom:12px">📦</div><div style="font-size:14px;color:#9ca3af">No apps installed</div></div>';
+    } else {
+      contentEl.innerHTML = '<div style="font-size:12px;color:#9ca3af;margin-bottom:12px">'+installed.length+' apps installed</div><div id="as-installed-list" style="display:flex;flex-direction:column;gap:8px"></div>';
+      var list = document.getElementById('as-installed-list');
+      installed.forEach(function(m){
+        var item = document.createElement('div');
+        item.style.cssText = 'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px';
+        item.innerHTML = '<div style="font-size:12px;color:#e5e7eb">'+C2.string.escapeHtml(m.name)+'</div><div style="font-size:10px;color:#6b7280">v'+m.version+' · '+m.permissions.length+' perms</div>';
+        list.appendChild(item);
+      });
+    }
+  }
+
+  content.querySelectorAll('.as-tab').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      content.querySelectorAll('.as-tab').forEach(function(b){ b.classList.remove('pass'); });
+      btn.classList.add('pass');
+      var tab = btn.getAttribute('data-tab');
+      if(tab === 'store') renderStore();
+      else if(tab === 'paste') renderPaste();
+      else if(tab === 'installed') renderInstalled();
     });
-    card.querySelector('.as-code').addEventListener('click', function(){
-      var winId = 'code-' + app.name + '-' + Date.now();
-      var codeContent = document.createElement('div');
-      codeContent.style.cssText = 'padding:12px;font-family:monospace;font-size:11px;color:#a8ffa8;background:#0a0a0f;height:100%;overflow:auto;white-space:pre-wrap;word-break:break-word';
-      codeContent.textContent = app.code;
-      WM.create({id:winId, title:app.name+' — source', icon:'📄', width:460, height:360, content:codeContent});
-    });
-    card.addEventListener('mouseenter', function(){ card.style.borderColor = 'rgba(16,185,129,0.3)'; });
-    card.addEventListener('mouseleave', function(){ card.style.borderColor = 'rgba(255,255,255,0.06)'; });
-    grid.appendChild(card);
   });
+  content.querySelector('.as-tab[data-tab="store"]').click();
 };
+
+
 
 
 
