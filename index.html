@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data: blob:; style-src 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net">
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.39/index.js" id="wabt-loader" async></script>
-<title>Zephyr OS v4.2.0</title>
+<title>Zephyr OS v4.3.0</title>
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -221,7 +221,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
 
 <div id="boot">
   <div class="boot-logo">Zephyr OS</div>
-  <div class="boot-version">v4.2.0 — Live deployment hardening (COOP/COEP + SIMD + WorkerPool)</div>
+  <div class="boot-version">v4.3.0 — Performance acceleration (writePixel batching + cached views)</div>
   <div class="boot-spinner"></div>
   <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
   <div class="boot-tip" id="boot-tip">Initializing kernel partitions...</div>
@@ -270,7 +270,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
     <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#10b981,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;box-shadow:0 2px 8px rgba(16,185,129,0.3)">🌀</div>
     <div>
       <div style="font-size:13px;font-weight:600;color:#f3f4f6">Zephyr User</div>
-      <div style="font-size:10px;color:#9ca3af">v4.2.0 · Live deployment hardening</div>
+      <div style="font-size:10px;color:#9ca3af">v4.3.0 · Performance accelerated</div>
     </div>
   </div>
   <input class="start-search" type="text" placeholder="Search apps..." id="start-search">
@@ -522,6 +522,7 @@ var GhostClipboard = (function(){
 var CSPSafeExec = (function(){
   var callbackId = 0;
   var pending = new Map();
+  var blobCache = new Map();
   function exec(api, code, timeoutMs){
     return new Promise(function(resolve, reject){
       var id = ++callbackId;
@@ -537,31 +538,29 @@ var CSPSafeExec = (function(){
         else p.resolve();
       };
       var scriptContent = '(function(api, callback){try{' + code + ';callback(null);}catch(e){callback(e.message||String(e));}})(window.__zephyr_api_' + id + ', window.' + cbName + ');';
-      // Set the API object on window so the script can access it
       window['__zephyr_api_' + id] = api;
-      var blob = new Blob([scriptContent], {type: 'application/javascript'});
-      var url = URL.createObjectURL(blob);
+      var url = blobCache.get(scriptContent);
+      if(!url){
+        var blob = new Blob([scriptContent], {type: 'application/javascript'});
+        url = URL.createObjectURL(blob);
+        blobCache.set(scriptContent, url);
+      }
       var script = document.createElement('script');
       script.src = url;
       script.onload = function(){
-        URL.revokeObjectURL(url);
-        // Clean up the api object after a short delay (script already ran synchronously)
         setTimeout(function(){ try { delete window['__zephyr_api_' + id]; } catch(e){ window['__zephyr_api_' + id] = undefined; } }, 100);
       };
       script.onerror = function(){
-        URL.revokeObjectURL(url);
         var p = pending.get(id);
         if(p){ pending.delete(id); p.reject(new Error('SCRIPT_LOAD_FAILED')); }
       };
       document.head.appendChild(script);
-      // Timeout
       setTimeout(function(){
         var p = pending.get(id);
         if(p){
           pending.delete(id);
           p.reject(new Error('EXEC_TIMEOUT'));
           try { document.head.removeChild(script); } catch(e){}
-          URL.revokeObjectURL(url);
         }
       }, timeoutMs || 10000);
     });
@@ -1292,7 +1291,7 @@ function hasPermission(manifest, perm){
 var C1 = (function(){
   var bootTime = performance.now();
   var state = {
-    version: 'Zephyr-OS-4.2.0',
+    version: 'Zephyr-OS-4.3.0',
     bootTime: bootTime,
     canvasId: 'wallpaper-canvas',
     memoryBase: 65536,
@@ -2135,12 +2134,22 @@ var Kernel = (function(){
   var MAX_DIRTY = 32;
   var dirtyTable = new Int32Array(MAX_DIRTY * 4);
   var fbImageData = null, fbU32 = null;
+  var _cachedBackBufferRef = null;
+  var _cachedView = null;
   function ensureImageData(w, h){
     if(!fbImageData || fbImageData.width !== w || fbImageData.height !== h){
       fbImageData = ctx.createImageData(w, h);
       fbU32 = new Uint32Array(fbImageData.data.buffer);
+      _cachedBackBufferRef = null;
     }
     return fbImageData;
+  }
+  function getCachedView(buf, offset, length){
+    if(_cachedBackBufferRef !== buf){
+      _cachedBackBufferRef = buf;
+      _cachedView = new Uint8ClampedArray(buf, offset, length);
+    }
+    return _cachedView;
   }
   function blendABGR(src, dst, alpha){
     if(alpha >= 255) return src >>> 0;
@@ -2336,12 +2345,12 @@ var Kernel = (function(){
         ErrorLog.log({msg:'GL_COMPOSITE_ERR: '+e.message, severity:'WARN', partition:'C3.15'});
         glEnabled = false;
         var img2 = ensureImageData(displayW, displayH);
-        img2.data.set(new Uint8ClampedArray(backBufferU32.buffer, backBufferU32.byteOffset, backBufferU32.byteLength));
+        img2.data.set(getCachedView(backBufferU32.buffer, backBufferU32.byteOffset, backBufferU32.byteLength));
         ctx.putImageData(img2, 0, 0);
       }
     } else {
       var img = ensureImageData(displayW, displayH);
-      img.data.set(new Uint8ClampedArray(backBufferU32.buffer, backBufferU32.byteOffset, backBufferU32.byteLength));
+      img.data.set(getCachedView(backBufferU32.buffer, backBufferU32.byteOffset, backBufferU32.byteLength));
       ctx.putImageData(img, 0, 0);
     }
     dirtyCount = 0;
@@ -2816,9 +2825,12 @@ var Kernel = (function(){
   C3_7.registerMethod('render', function(){
     var metrics = C3_15.invoke('getDisplayMetrics');
     if(!metrics || !metrics.bound) return;
+    var w = metrics.w, h = metrics.h;
     for(var i=0; i<particleCount; i++){
+      var x = px[i]|0, y = py[i]|0, r = pr[i]|0;
+      if(x + r < 0 || x - r > w || y + r < 0 || y - r > h) continue;
       var color = hslaToABGR(160 + phue[i]*0.2, 70, 60, 0.5);
-      C3_15.invoke('fillRectBlend', px[i], py[i], pr[i]*2, pr[i]*2, color, 120);
+      C3_15.invoke('fillRectBlend', x, y, r*2, r*2, color, 120);
     }
   });
   C3_7.registerMethod('reset', function(){ initParticles(particleCount); });
@@ -2844,13 +2856,21 @@ var Kernel = (function(){
     if(dt < DT_MIN) dt = DT_MIN;
     lastDt = dt;
     var _now = t;
-    try{ Dispatch.call('EVENT_DRAIN'); }catch(e){ if(!_loopErrLog.EVENT_DRAIN || _now - _loopErrLog.EVENT_DRAIN > 5000){ _loopErrLog.EVENT_DRAIN = _now; ErrorLog.log({msg:'LOOP_ERR EVENT_DRAIN: '+e.message, severity:'WARN', partition:'C3.8'}); } }
-    try{ C3_11.invoke('tick', C1.read('schedulerBudgetMs')); }catch(e){ if(!_loopErrLog.SCHED || _now - _loopErrLog.SCHED > 5000){ _loopErrLog.SCHED = _now; ErrorLog.log({msg:'LOOP_ERR SCHED: '+e.message, severity:'WARN', partition:'C3.8'}); } }
-    try{ Dispatch.call('DEMO_UPDATE', dt); }catch(e){ if(!_loopErrLog.DEMO_UPD || _now - _loopErrLog.DEMO_UPD > 5000){ _loopErrLog.DEMO_UPD = _now; ErrorLog.log({msg:'LOOP_ERR DEMO_UPDATE: '+e.message, severity:'WARN', partition:'C3.8'}); } }
-    try{ Dispatch.call('DEMO_RENDER'); }catch(e){ if(!_loopErrLog.DEMO_REN || _now - _loopErrLog.DEMO_REN > 5000){ _loopErrLog.DEMO_REN = _now; ErrorLog.log({msg:'LOOP_ERR DEMO_RENDER: '+e.message, severity:'WARN', partition:'C3.8'}); } }
-    try{ if(!C3_15.isDestroyed) C3_15.invoke('compositeActiveLayers'); }catch(e){ if(!_loopErrLog.COMPOSITE || _now - _loopErrLog.COMPOSITE > 5000){ _loopErrLog.COMPOSITE = _now; ErrorLog.log({msg:'LOOP_ERR COMPOSITE: '+e.message, severity:'WARN', partition:'C3.8'}); } }
-    try{ C3_10.invoke('sample', dt); }catch(e){ if(!_loopErrLog.SAMPLE || _now - _loopErrLog.SAMPLE > 5000){ _loopErrLog.SAMPLE = _now; ErrorLog.log({msg:'LOOP_ERR SAMPLE: '+e.message, severity:'WARN', partition:'C3.8'}); } }
-    try{ C3_5.invoke('emit', 'stats:update', {fps: lastDt > 0 ? 1000/lastDt : 0, dt: lastDt, mem: memUsedEff(), errs: ErrorLog.getErrorCount(), parts: partitions.size}); }catch(e){ if(!_loopErrLog.STATS || _now - _loopErrLog.STATS > 5000){ _loopErrLog.STATS = _now; ErrorLog.log({msg:'LOOP_ERR STATS: '+e.message, severity:'WARN', partition:'C3.8'}); } }
+    try{
+      Dispatch.call('EVENT_DRAIN');
+      C3_11.invoke('tick', C1.read('schedulerBudgetMs'));
+      Dispatch.call('DEMO_UPDATE', dt);
+      Dispatch.call('DEMO_RENDER');
+      if(!C3_15.isDestroyed) C3_15.invoke('compositeActiveLayers');
+      C3_10.invoke('sample', dt);
+      C3_5.invoke('emit', 'stats:update', {fps: lastDt > 0 ? 1000/lastDt : 0, dt: lastDt, mem: memUsedEff(), errs: ErrorLog.getErrorCount(), parts: partitions.size});
+    }catch(e){
+      var _slot = 'LOOP';
+      if(!_loopErrLog[_slot] || _now - _loopErrLog[_slot] > 5000){
+        _loopErrLog[_slot] = _now;
+        ErrorLog.log({msg:'LOOP_ERR: '+e.message, severity:'WARN', partition:'C3.8'});
+      }
+    }
     if(kernelState === 'RUNNING' && animId !== null){ animId = requestAnimationFrame(loop); }
     else { animId = null; }
   }
@@ -8397,7 +8417,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   369: function(k){ var pm = k.getPartitionRaw('C3.6'); var t = 'C3.94.'+Date.now(); pm.invoke('create', t, 'C3.1'); var p = k.getPartitionRaw(t); if(!p) return {pass:false, detail:'create failed'}; p.export('noop', function(){return 1;}); var before = p.exportCount; pm.invoke('destroy', t); try{ var after = p.exportCount; }catch(e){ var after = -1; } return {pass:before === 1, detail:'WM cleanup destroys partition exports (FIX 10): before='+before+', after='+after}; },
   370: function(k){ var m = k.getPartitionRaw('C3.2'); if(!m.hasMethod('ensureMemory')) return {pass:false, detail:'no ensureMemory'}; var before = m.invoke('hasWasmMemory'); try{ m.invoke('ensureMemory'); }catch(e){ return {pass:false, detail:'ensureMemory threw: '+e.message}; } var after = m.invoke('hasWasmMemory'); return {pass:after === true, detail:'boot calls ensureMemory (FIX 11): before='+before+', after='+after}; },
   371: function(k){ var errs = k.getErrors(); var realFatals = 0; for(var i=0;i<errs.length;i++){ if(errs[i].severity === 'FATAL' && errs[i].partition !== 'TEST' && errs[i].partition !== 'T' && errs[i].partition !== 'RING_TEST'){ realFatals++; } } return {pass:true, detail:'audit cleanup preserves real FATals (FIX 7): count='+realFatals}; },
-  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.2.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v4.2.0 live deployment hardening (427 tests)'}; },
+  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.3.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v4.3.0 performance accelerated (427 tests)'}; },
   373: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=[]; var count=0; sch.invoke("add", function(){ count++; if(count<3){ sch.invoke("add", function(){ ran.push("child"); }, "HIGH"); } ran.push("parent"); }, "NORMAL"); sch.invoke("tick", 100); sch.invoke("clearAll"); return {pass: count === 1, detail:"Scheduler reentrancy guarded (FIX 1+2): parent ran "+count+" time(s)"}; },
   374: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=0; sch.invoke("add", function(){ ran++; }, "NORMAL"); sch.invoke("tick", 0); sch.invoke("clearAll"); return {pass:ran===0, detail:"budget=0 runs 0 tasks (FIX 3): ran="+ran}; },
   375: function(k){ var c4=k.getPartitionRaw("C3.4"); if(!c4.hasMethod("instantiate")) return {pass:false, detail:"no instantiate"}; return {pass:true, detail:"C3.4 uses inst.exports.memory (FIX 4)"}; },
@@ -8409,7 +8429,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   381: function(k){ var el = window.document.querySelector('meta[http-equiv="Content-Security-Policy"]'); if(!el) return {pass:false, detail:"no CSP meta"}; var csp = el.content; var hasUE = /'unsafe-eval'/.test(csp); var hasWUE = /'wasm-unsafe-eval'/.test(csp); return {pass:!hasUE, detail:'CSP: unsafe-eval='+hasUE+' wasm-unsafe-eval='+hasWUE+' (v4.1.0)'}; },
   382: function(k){ var c2=k.getPartitionRaw("C3.2"); if(!c2.hasMethod("alloc")) return {pass:false, detail:"no alloc"}; if(!c2.hasMethod("allocBlock")) return {pass:false, detail:"no allocBlock"}; if(!c2.hasMethod("freeBlock")) return {pass:false, detail:"no freeBlock"}; return {pass:true, detail:"C3.2 alloc/allocBlock/freeBlock present (deepdive v2.0.6)"}; },
   383: function(k){ var ev=k.getPartitionRaw("C3.5"); if(!ev.hasMethod("getLastMods")) return {pass:false, detail:"no getLastMods"}; return {pass:true, detail:"C3.5 getLastMods present; reset on blur (FIX 22)"}; },
-  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-4.2.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v4.2.0 live deployment hardening (427 tests)"}; },
+  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-4.3.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v4.3.0 performance accelerated (427 tests)"}; },
   385: function(k){ if(!k.linker || typeof k.linker.assertCap !== 'function') return {pass:false, detail:'no Linker'}; try{ k.linker.assertCap('C3.15','C3.12'); }catch(e){ return {pass:false, detail:'allowed cap threw: '+e.message}; } return {pass:true, detail:'Linker allows C3.15 -> C3.12 (#1)'}; },
   386: function(k){ if(!k.linker) return {pass:false, detail:'no Linker'}; var threw=false; try{ k.linker.assertCap('C3.15','C3.4'); }catch(e){ threw=true; if(e.message.indexOf('LINKER_CAP_DENIED')<0) return {pass:false, detail:'wrong error: '+e.message}; } return {pass:threw, detail:'Linker denies C3.15 -> C3.4 (#1)'}; },
   387: function(k){ if(typeof __ZEPHYR_AUDIT === 'undefined') return {pass:false, detail:'no __ZEPHYR_AUDIT flag'}; return {pass:__ZEPHYR_AUDIT===true, detail:'__ZEPHYR_AUDIT='+__ZEPHYR_AUDIT+' (#14)'}; },
@@ -8425,7 +8445,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   397: function(k){ if(typeof Apps.launchWorkerApp !== 'function') return {pass:false, detail:'no launchWorkerApp'}; return {pass:true, detail:'Apps.launchWorkerApp present (#18)'}; },
   398: function(k){ if(typeof showManifestConsent !== 'function') return {pass:false, detail:'no showManifestConsent'}; return {pass:true, detail:'Consent dialog present (#19)'}; },
   399: function(k){ var ds=k.getPartitionRaw('C3.15'); if(!ds.hasMethod('isGLCompositor')) return {pass:false, detail:'no isGLCompositor'}; var gl=ds.invoke('isGLCompositor'); return {pass:typeof gl === 'boolean', detail:'GL compositor: '+gl+' (#20)'}; },
-  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.2.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.2.0 live deployment hardening (427 tests)'}; },
+  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.3.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.3.0 performance accelerated (427 tests)'}; },
   401: function(k){ if(!k.hw) return {pass:false, detail:'no HardwareBridge'}; if(typeof k.hw.isSAB !== 'function') return {pass:false, detail:'no isSAB'}; return {pass:true, detail:'HardwareBridge present; SAB='+k.hw.isSAB()+' (#1)'}; },
   402: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; k.hw.setMouseState(100, 200, 1); var s=k.hw.getMouseState(); return {pass:s.x===100&&s.y===200&&s.buttons===1, detail:'event coalescer: x='+s.x+' y='+s.y+' btn='+s.buttons+' (#18)'}; },
   403: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; var t=k.hw.getTimeOrigin(); return {pass:typeof t==='number'&&t>0, detail:'timeOrigin='+t+' (#13)'}; },
@@ -8445,7 +8465,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   417: function(k){ if(!k.wakeLock) return {pass:false, detail:'no wakeLock'}; return {pass:typeof k.wakeLock.request==='function', detail:'WakeLock present (#8)'}; },
   418: function(k){ if(!k.opfs) return {pass:false, detail:'no opfs'}; if(!k.transport) return {pass:false, detail:'no transport'}; if(!k.audio) return {pass:false, detail:'no audio'}; if(!k.simd) return {pass:false, detail:'no simd'}; return {pass:true, detail:'OPFS+WebTransport+Audio+SIMD present (#9+#10+#12+#16)'}; },
   419: function(k){ if(!k.boundary) return {pass:false, detail:'no boundary'}; if(!k.staticLinker) return {pass:false, detail:'no staticLinker'}; if(!k.gcFree) return {pass:false, detail:'no gcFree'}; return {pass:true, detail:'Boundary+StaticLinker+GCFree present (#2+#14+#15)'}; },
-  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.2.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.2.0 live hardening (427 tests)'}; },
+  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-4.3.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v4.3.0 performance accelerated (427 tests)'}; },
   421: function(k){ if(!k.wat) return {pass:false, detail:'no WATCompiler'}; if(typeof k.wat.compile !== 'function') return {pass:false, detail:'no compile'}; return {pass:true, detail:'WATCompiler present (wabt.js integration)'}; },
   422: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; return k.wat.init().then(function(ok){ return {pass:ok, detail:'wabt.js loaded: '+ok}; }).catch(function(e){ return {pass:false, detail:'init failed: '+e.message}; }); },
   423: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; var wat = '(module (func (export \"add\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))'; return k.wat.compile(wat).then(function(bytes){ if(!(bytes instanceof Uint8Array) || bytes.length < 8) return {pass:false, detail:'bytes invalid'}; return {pass:true, detail:'WAT compiled: '+bytes.length+' bytes'}; }).catch(function(e){ return {pass:false, detail:'compile failed: '+e.message}; }); },
@@ -10701,12 +10721,22 @@ Apps.launchWidget = function(widgetName){
         try{ prevWClose && prevWClose(); }catch(e){}
       };
     }
+    var _dirty = false;
     var appEnv = {
-      writePixel: function(x, y, abgr){ x=x|0; y=y|0; if(x<0||x>=canvasEl.width||y<0||y>=canvasEl.height) return false; u32[y*canvasEl.width+x] = abgr>>>0; cctx.putImageData(imgData, 0, 0); return true; },
+      writePixel: function(x, y, abgr){ x=x|0; y=y|0; if(x<0||x>=canvasEl.width||y<0||y>=canvasEl.height) return false; u32[y*canvasEl.width+x] = abgr>>>0; _dirty = true; return true; },
+      flush: function(){ if(_dirty){ cctx.putImageData(imgData, 0, 0); _dirty = false; } },
       pollInput: function(){ return inputQueue.length > 0 ? inputQueue.shift() : null; },
       getWidth: function(){ return canvasEl.width; },
       getHeight: function(){ return canvasEl.height; },
-      requestAnimationFrame: function(fn){ if(_widgetClosed) return 0; var id = _origRaf.call(window, fn); _widgetRafIds.push(id); return id; },
+      requestAnimationFrame: function(fn){
+        if(_widgetClosed) return 0;
+        var id = _origRaf.call(window, function(t){
+          try{ fn(t); }catch(e){}
+          appEnv.flush();
+        });
+        _widgetRafIds.push(id);
+        return id;
+      },
       log: function(){}
     };
     CSPSafeExec.exec(appEnv, widgetCode, 30000).catch(function(e){ try{ ErrorLog.log({msg:'WIDGET_EXEC_ERR: '+e.message, severity:'WARN', partition:'C3.14'}); }catch(_){} });
@@ -11011,13 +11041,23 @@ Apps.launchCustom = function(name){
     var _customClosed = false;
     var _origRaf = window.requestAnimationFrame;
     var appEnv = {
-      writePixel: function(x, y, abgr){ x=x|0; y=y|0; if(x<0||x>=canvasEl.width||y<0||y>=canvasEl.height) return false; u32[y*canvasEl.width+x] = abgr>>>0; cctx.putImageData(imgData, 0, 0); return true; },
+      writePixel: function(x, y, abgr){ x=x|0; y=y|0; if(x<0||x>=canvasEl.width||y<0||y>=canvasEl.height) return false; u32[y*canvasEl.width+x] = abgr>>>0; _dirty = true; return true; },
+      flush: function(){ if(_dirty){ cctx.putImageData(imgData, 0, 0); _dirty = false; } },
       pollInput: function(){ return inputQueue.length > 0 ? inputQueue.shift() : null; },
       getWidth: function(){ return canvasEl.width; },
       getHeight: function(){ return canvasEl.height; },
-      requestAnimationFrame: function(fn){ if(_customClosed) return 0; var id = _origRaf.call(window, fn); _customRafIds.push(id); return id; },
+      requestAnimationFrame: function(fn){
+        if(_customClosed) return 0;
+        var id = _origRaf.call(window, function(t){
+          try{ fn(t); }catch(e){}
+          appEnv.flush();
+        });
+        _customRafIds.push(id);
+        return id;
+      },
       log: function(){ var args = Array.prototype.slice.call(arguments); var msg = args.map(function(a){return typeof a === 'object' ? JSON.stringify(a) : String(a);}).join(' '); logDiv.innerHTML = '<div>'+C2.string.escapeHtml(msg)+'</div>' + logDiv.innerHTML; }
     };
+    var _dirty = false;
     var win0 = WM.get(winId);
     if(win0){
       var prevClose = win0.onClose;
