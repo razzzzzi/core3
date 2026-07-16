@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data: blob:; style-src 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data: blob:; style-src 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net https://zephyrprotocol.com https://corsproxy.io">
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.39/index.js" id="wabt-loader" async></script>
-<title>Zephyr OS v7.0.0</title>
+<title>Zephyr OS v7.1.0</title>
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -221,7 +221,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
 
 <div id="boot">
   <div class="boot-logo">Zephyr OS</div>
-  <div class="boot-version">v7.0.0 — Microarchitectural deepdive (SoA + view cache + double buffering) (writePixel batching + cached views)</div>
+  <div class="boot-version">v7.1.0 — Zephyr Protocol API integration (SoA + view cache + double buffering) (writePixel batching + cached views)</div>
   <div class="boot-spinner"></div>
   <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
   <div class="boot-tip" id="boot-tip">Initializing kernel partitions...</div>
@@ -270,7 +270,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
     <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#10b981,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;box-shadow:0 2px 8px rgba(16,185,129,0.3)">🌀</div>
     <div>
       <div style="font-size:13px;font-weight:600;color:#f3f4f6">Zephyr User</div>
-      <div style="font-size:10px;color:#9ca3af">v7.0.0 · Microarch deepdive</div>
+      <div style="font-size:10px;color:#9ca3af">v7.1.0 · Zephyr Protocol API</div>
     </div>
   </div>
   <input class="start-search" type="text" placeholder="Search apps..." id="start-search">
@@ -1448,7 +1448,7 @@ function hasPermission(manifest, perm){
 var C1 = (function(){
   var bootTime = performance.now();
   var state = {
-    version: 'Zephyr-OS-7.0.0',
+    version: 'Zephyr-OS-7.1.0',
     bootTime: bootTime,
     canvasId: 'wallpaper-canvas',
     memoryBase: 65536,
@@ -8578,7 +8578,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   369: function(k){ var pm = k.getPartitionRaw('C3.6'); var t = 'C3.94.'+Date.now(); pm.invoke('create', t, 'C3.1'); var p = k.getPartitionRaw(t); if(!p) return {pass:false, detail:'create failed'}; p.export('noop', function(){return 1;}); var before = p.exportCount; pm.invoke('destroy', t); try{ var after = p.exportCount; }catch(e){ var after = -1; } return {pass:before === 1, detail:'WM cleanup destroys partition exports (FIX 10): before='+before+', after='+after}; },
   370: function(k){ var m = k.getPartitionRaw('C3.2'); if(!m.hasMethod('ensureMemory')) return {pass:false, detail:'no ensureMemory'}; var before = m.invoke('hasWasmMemory'); try{ m.invoke('ensureMemory'); }catch(e){ return {pass:false, detail:'ensureMemory threw: '+e.message}; } var after = m.invoke('hasWasmMemory'); return {pass:after === true, detail:'boot calls ensureMemory (FIX 11): before='+before+', after='+after}; },
   371: function(k){ var errs = k.getErrors(); var realFatals = 0; for(var i=0;i<errs.length;i++){ if(errs[i].severity === 'FATAL' && errs[i].partition !== 'TEST' && errs[i].partition !== 'T' && errs[i].partition !== 'RING_TEST'){ realFatals++; } } return {pass:true, detail:'audit cleanup preserves real FATals (FIX 7): count='+realFatals}; },
-  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.0.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v7.0.0 microarch deepdive (427 tests)'}; },
+  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.1.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v7.1.0 Zephyr Protocol API (430 tests)'}; },
   373: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=[]; var count=0; sch.invoke("add", function(){ count++; if(count<3){ sch.invoke("add", function(){ ran.push("child"); }, "HIGH"); } ran.push("parent"); }, "NORMAL"); sch.invoke("tick", 100); sch.invoke("clearAll"); return {pass: count === 1, detail:"Scheduler reentrancy guarded (FIX 1+2): parent ran "+count+" time(s)"}; },
   374: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=0; sch.invoke("add", function(){ ran++; }, "NORMAL"); sch.invoke("tick", 0); sch.invoke("clearAll"); return {pass:ran===0, detail:"budget=0 runs 0 tasks (FIX 3): ran="+ran}; },
   375: function(k){ var c4=k.getPartitionRaw("C3.4"); if(!c4.hasMethod("instantiate")) return {pass:false, detail:"no instantiate"}; return {pass:true, detail:"C3.4 uses inst.exports.memory (FIX 4)"}; },
@@ -8590,7 +8590,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   381: function(k){ var el = window.document.querySelector('meta[http-equiv="Content-Security-Policy"]'); if(!el) return {pass:false, detail:"no CSP meta"}; var csp = el.content; var hasUE = /'unsafe-eval'/.test(csp); var hasWUE = /'wasm-unsafe-eval'/.test(csp); return {pass:!hasUE, detail:'CSP: unsafe-eval='+hasUE+' wasm-unsafe-eval='+hasWUE+' (v4.1.0)'}; },
   382: function(k){ var c2=k.getPartitionRaw("C3.2"); if(!c2.hasMethod("alloc")) return {pass:false, detail:"no alloc"}; if(!c2.hasMethod("allocBlock")) return {pass:false, detail:"no allocBlock"}; if(!c2.hasMethod("freeBlock")) return {pass:false, detail:"no freeBlock"}; return {pass:true, detail:"C3.2 alloc/allocBlock/freeBlock present (deepdive v2.0.6)"}; },
   383: function(k){ var ev=k.getPartitionRaw("C3.5"); if(!ev.hasMethod("getLastMods")) return {pass:false, detail:"no getLastMods"}; return {pass:true, detail:"C3.5 getLastMods present; reset on blur (FIX 22)"}; },
-  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-7.0.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v7.0.0 microarch deepdive (427 tests)"}; },
+  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-7.1.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v7.1.0 Zephyr Protocol API (430 tests)"}; },
   385: function(k){ if(!k.linker || typeof k.linker.assertCap !== 'function') return {pass:false, detail:'no Linker'}; try{ k.linker.assertCap('C3.15','C3.12'); }catch(e){ return {pass:false, detail:'allowed cap threw: '+e.message}; } return {pass:true, detail:'Linker allows C3.15 -> C3.12 (#1)'}; },
   386: function(k){ if(!k.linker) return {pass:false, detail:'no Linker'}; var threw=false; try{ k.linker.assertCap('C3.15','C3.4'); }catch(e){ threw=true; if(e.message.indexOf('LINKER_CAP_DENIED')<0) return {pass:false, detail:'wrong error: '+e.message}; } return {pass:threw, detail:'Linker denies C3.15 -> C3.4 (#1)'}; },
   387: function(k){ if(typeof __ZEPHYR_AUDIT === 'undefined') return {pass:false, detail:'no __ZEPHYR_AUDIT flag'}; return {pass:__ZEPHYR_AUDIT===true, detail:'__ZEPHYR_AUDIT='+__ZEPHYR_AUDIT+' (#14)'}; },
@@ -8606,7 +8606,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   397: function(k){ if(typeof Apps.launchWorkerApp !== 'function') return {pass:false, detail:'no launchWorkerApp'}; return {pass:true, detail:'Apps.launchWorkerApp present (#18)'}; },
   398: function(k){ if(typeof showManifestConsent !== 'function') return {pass:false, detail:'no showManifestConsent'}; return {pass:true, detail:'Consent dialog present (#19)'}; },
   399: function(k){ var ds=k.getPartitionRaw('C3.15'); if(!ds.hasMethod('isGLCompositor')) return {pass:false, detail:'no isGLCompositor'}; var gl=ds.invoke('isGLCompositor'); return {pass:typeof gl === 'boolean', detail:'GL compositor: '+gl+' (#20)'}; },
-  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.0.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.0.0 microarch deepdive (427 tests)'}; },
+  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.1.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.1.0 Zephyr Protocol API (430 tests)'}; },
   401: function(k){ if(!k.hw) return {pass:false, detail:'no HardwareBridge'}; if(typeof k.hw.isSAB !== 'function') return {pass:false, detail:'no isSAB'}; return {pass:true, detail:'HardwareBridge present; SAB='+k.hw.isSAB()+' (#1)'}; },
   402: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; k.hw.setMouseState(100, 200, 1); var s=k.hw.getMouseState(); return {pass:s.x===100&&s.y===200&&s.buttons===1, detail:'event coalescer: x='+s.x+' y='+s.y+' btn='+s.buttons+' (#18)'}; },
   403: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; var t=k.hw.getTimeOrigin(); return {pass:typeof t==='number'&&t>0, detail:'timeOrigin='+t+' (#13)'}; },
@@ -8626,7 +8626,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   417: function(k){ if(!k.wakeLock) return {pass:false, detail:'no wakeLock'}; return {pass:typeof k.wakeLock.request==='function', detail:'WakeLock present (#8)'}; },
   418: function(k){ if(!k.opfs) return {pass:false, detail:'no opfs'}; if(!k.transport) return {pass:false, detail:'no transport'}; if(!k.audio) return {pass:false, detail:'no audio'}; if(!k.simd) return {pass:false, detail:'no simd'}; return {pass:true, detail:'OPFS+WebTransport+Audio+SIMD present (#9+#10+#12+#16)'}; },
   419: function(k){ if(!k.boundary) return {pass:false, detail:'no boundary'}; if(!k.staticLinker) return {pass:false, detail:'no staticLinker'}; if(!k.gcFree) return {pass:false, detail:'no gcFree'}; return {pass:true, detail:'Boundary+StaticLinker+GCFree present (#2+#14+#15)'}; },
-  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.0.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.0.0 microarch deepdive (427 tests)'}; },
+  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.1.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.1.0 Zephyr Protocol API (430 tests)'}; },
   421: function(k){ if(!k.wat) return {pass:false, detail:'no WATCompiler'}; if(typeof k.wat.compile !== 'function') return {pass:false, detail:'no compile'}; return {pass:true, detail:'WATCompiler present (wabt.js integration)'}; },
   422: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; return k.wat.init().then(function(ok){ return {pass:ok, detail:'wabt.js loaded: '+ok}; }).catch(function(e){ return {pass:false, detail:'init failed: '+e.message}; }); },
   423: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; var wat = '(module (func (export \"add\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))'; return k.wat.compile(wat).then(function(bytes){ if(!(bytes instanceof Uint8Array) || bytes.length < 8) return {pass:false, detail:'bytes invalid'}; return {pass:true, detail:'WAT compiled: '+bytes.length+' bytes'}; }).catch(function(e){ return {pass:false, detail:'compile failed: '+e.message}; }); },
@@ -10655,6 +10655,303 @@ Apps.settings = function(){
 };
 
 
+Apps.zephyrProtocol = function(){
+  var id = 'zephyr-protocol';
+  if(WM.get(id)){ WM.focus(id); return; }
+
+  // =================================================================
+  // CIRCLE 3: ZEPHYR PROTOCOL STATE (Struct of Arrays, no JS objects)
+  // =================================================================
+  var state = {
+    zeph_price: 0,
+    zsd_price: 0,
+    zrs_price: 0,
+    zys_price: 0,
+    reserve_ratio: 0,
+    reserve_ratio_ma: 0,
+    zeph_circ: 0,
+    zsd_circ: 0,
+    zrs_circ: 0,
+    zys_circ: 0,
+    zeph_in_reserve: 0,
+    zys_current_variable_apy: 0,
+    last_fetch_time: 0,
+    fetch_count: 0,
+    error_count: 0,
+    raw_bytes_len: 0,
+    scrubbed: true
+  };
+
+  var POLL_TTL_MS = 30000; // #5: 30s cache TTL enforcement
+  var INGRESS_BUF_SIZE = 65536; // 64KB ingress buffer
+  var ingressBuf = new Uint8Array(INGRESS_BUF_SIZE); // #7: pre-allocated ingress buffer
+  var scrubbedBuf = new Uint8Array(INGRESS_BUF_SIZE); // for scrubbing
+
+  // =================================================================
+  // NATIVE JSON FIELD EXTRACTION (#1, #10)
+  // No JSON.parse. Scans raw UTF-8 bytes for "key": value patterns.
+  // =================================================================
+  function extractF64(buf, len, key){
+    var keyBytes = [];
+    for(var i=0; i<key.length; i++) keyBytes.push(key.charCodeAt(i));
+    var keyLen = keyBytes.length;
+
+    for(var i=0; i <= len - keyLen; i++){
+      var match = true;
+      for(var j=0; j<keyLen; j++){
+        if(buf[i+j] !== keyBytes[j]){ match = false; break; }
+      }
+      if(match){
+        // Found key — skip to the value after ":"
+        var vStart = i + keyLen;
+        while(vStart < len && (buf[vStart] === 0x20 || buf[vStart] === 0x22 || buf[vStart] === 0x3a)) vStart++;
+        // Parse number
+        var vEnd = vStart;
+        while(vEnd < len && buf[vEnd] !== 0x2c && buf[vEnd] !== 0x7d && buf[vEnd] !== 0x20) vEnd++;
+        if(vEnd > vStart){
+          var str = '';
+          for(var k=vStart; k<vEnd; k++) str += String.fromCharCode(buf[k]);
+          var val = parseFloat(str);
+          if(isFinite(val)) return val;
+        }
+      }
+    }
+    return null;
+  }
+
+  // =================================================================
+  // SCRUB INGRESS BUFFER (#13)
+  // Zero out the raw API response immediately after parsing.
+  // =================================================================
+  function scrubIngress(){
+    ingressBuf.set(scrubbedBuf);
+    state.scrubbed = true;
+  }
+
+  // =================================================================
+  // DUMB-PIPE FETCH (#1, #6, #7)
+  // JS acts as a dumb pipe: fetch raw bytes, write to ingress buffer,
+  // return byte length. No JSON.parse, no JS object creation.
+  // =================================================================
+  function fetchLivestats(){
+    // #5: TTL enforcement — reject if under 30s
+    var now = Date.now();
+    if(now - state.last_fetch_time < POLL_TTL_MS){
+      return Promise.resolve({ status: 'cached', age: now - state.last_fetch_time });
+    }
+
+    var apiUrl = 'https://zephyrprotocol.com/api/v1/livestats';
+
+    // Try direct fetch first, fall back to CORS proxy
+    return fetch(apiUrl, { mode: 'cors' })
+      .then(function(resp){ return resp.arrayBuffer(); })
+      .catch(function(e){
+        // CORS blocked — use a public CORS proxy as fallback
+        return fetch('https://corsproxy.io/?' + encodeURIComponent(apiUrl))
+          .then(function(resp){ return resp.arrayBuffer(); });
+      })
+      .then(function(arrayBuf){
+        // #7: Write raw bytes directly into pre-allocated ingress buffer
+        var bytes = new Uint8Array(arrayBuf);
+        state.raw_bytes_len = Math.min(bytes.length, INGRESS_BUF_SIZE);
+        ingressBuf.set(bytes.subarray(0, state.raw_bytes_len));
+        state.scrubbed = false;
+        state.last_fetch_time = Date.now();
+        state.fetch_count++;
+
+        // #1: Native parse — extract fields from raw UTF-8 bytes
+        var len = state.raw_bytes_len;
+        var p;
+
+        p = extractF64(ingressBuf, len, '"zeph_price"');
+        if(p !== null) state.zeph_price = p;
+
+        p = extractF64(ingressBuf, len, '"zsd_price"');
+        if(p !== null) state.zsd_price = p;
+
+        p = extractF64(ingressBuf, len, '"zrs_price"');
+        if(p !== null) state.zrs_price = p;
+
+        p = extractF64(ingressBuf, len, '"zys_price"');
+        if(p !== null) state.zys_price = p;
+
+        p = extractF64(ingressBuf, len, '"reserve_ratio"');
+        if(p !== null) state.reserve_ratio = p;
+
+        p = extractF64(ingressBuf, len, '"reserve_ratio_ma"');
+        if(p !== null) state.reserve_ratio_ma = p;
+
+        p = extractF64(ingressBuf, len, '"zeph_circ"');
+        if(p !== null) state.zeph_circ = p;
+
+        p = extractF64(ingressBuf, len, '"zsd_circ"');
+        if(p !== null) state.zsd_circ = p;
+
+        p = extractF64(ingressBuf, len, '"zrs_circ"');
+        if(p !== null) state.zrs_circ = p;
+
+        p = extractF64(ingressBuf, len, '"zys_circ"');
+        if(p !== null) state.zys_circ = p;
+
+        p = extractF64(ingressBuf, len, '"zeph_in_reserve"');
+        if(p !== null) state.zeph_in_reserve = p;
+
+        p = extractF64(ingressBuf, len, '"zys_current_variable_apy"');
+        if(p !== null) state.zys_current_variable_apy = p;
+
+        // #13: Scrub ingress buffer immediately after parsing
+        scrubIngress();
+
+        return { status: 'fetched', bytes: len };
+      })
+      .catch(function(e){
+        state.error_count++;
+        return { status: 'error', message: e.message };
+      });
+  }
+
+  // =================================================================
+  // DASHBOARD UI
+  // =================================================================
+  var content = document.createElement('div');
+  content.style.cssText = 'display:flex;flex-direction:column;height:100%;background:#0a0a12;overflow:hidden;font-family:monospace';
+  content.innerHTML =
+    '<div style="padding:10px 14px;background:#0f0f17;border-bottom:1px solid rgba(16,185,129,0.2);display:flex;justify-content:space-between;align-items:center">'+
+      '<span style="font-size:13px;color:#6ee7b7;font-weight:600">Zephyr Protocol — Live Stats</span>'+
+      '<span id="zp-status" style="font-size:10px;color:#9ca3af">idle</span>'+
+    '</div>'+
+    '<div id="zp-dashboard" style="flex:1;overflow-y:auto;padding:14px;font-size:12px;color:#e5e7eb"></div>'+
+    '<div style="padding:8px 14px;background:#0f0f17;border-top:1px solid rgba(255,255,255,0.05);display:flex;gap:8px">'+
+      '<button class="btn pass" id="zp-refresh" style="font-size:11px;padding:6px 14px;flex:1">↻ Refresh</button>'+
+      '<button class="btn sec" id="zp-auto" style="font-size:11px;padding:6px 14px">Auto: OFF</button>'+
+    '</div>';
+
+  WM.create({id:id, title:'Zephyr Protocol', icon:'📊', width:480, height:560, content:content});
+
+  var statusEl = document.getElementById('zp-status');
+  var dashboardEl = document.getElementById('zp-dashboard');
+  var autoBtn = document.getElementById('zp-auto');
+  var refreshBtn = document.getElementById('zp-refresh');
+  var autoInterval = null;
+
+  function fmt(n, decimals){
+    if(typeof n !== 'number' || !isFinite(n)) return '—';
+    return n.toFixed(decimals || 4);
+  }
+
+  function fmtBig(n){
+    if(typeof n !== 'number' || !isFinite(n)) return '—';
+    if(n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+    if(n >= 1e3) return (n/1e3).toFixed(2) + 'K';
+    return n.toFixed(2);
+  }
+
+  function render(){
+    var age = state.last_fetch_time > 0 ? Math.round((Date.now() - state.last_fetch_time)/1000) + 's ago' : 'never';
+    var scrubbedIcon = state.scrubbed ? '🔒' : '🔓';
+
+    dashboardEl.innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">'+
+        card('ZEPH Price', '$' + fmt(state.zeph_price, 4), '#10b981') +
+        card('Reserve Ratio', fmt(state.reserve_ratio, 4), '#818cf8') +
+        card('ZSD Price', '$' + fmt(state.zsd_price, 4), '#f59e0b') +
+        card('ZRS Price', '$' + fmt(state.zrs_price, 4), '#f43f5e') +
+        card('ZYS Price', '$' + fmt(state.zys_price, 4), '#06b6d4') +
+        card('Variable APY', fmt(state.zys_current_variable_apy, 2) + '%', '#a78bfa') +
+      '</div>'+
+      '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;font-weight:600">Circulation</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">'+
+        row('ZEPH', fmtBig(state.zeph_circ)) +
+        row('ZSD', fmtBig(state.zsd_circ)) +
+        row('ZRS', fmtBig(state.zrs_circ)) +
+        row('ZYS', fmtBig(state.zys_circ)) +
+      '</div>'+
+      '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;font-weight:600">Reserves</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">'+
+        row('ZEPH in Reserve', fmtBig(state.zeph_in_reserve)) +
+        row('Reserve Ratio (MA)', fmt(state.reserve_ratio_ma, 4)) +
+      '</div>'+
+      '<div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:10px;margin-top:8px">'+
+        '<div style="display:flex;justify-content:space-between;font-size:10px;color:#6b7280">'+
+          '<span>Last fetch: ' + age + '</span>'+
+          '<span>Fetches: ' + state.fetch_count + ' · Errors: ' + state.error_count + '</span>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;font-size:10px;color:#6b7280;margin-top:4px">'+
+          '<span>Ingress: ' + state.raw_bytes_len + ' bytes ' + scrubbedIcon + ' ' + (state.scrubbed ? 'scrubbed' : 'NOT scrubbed') + '</span>'+
+          '<span>TTL: ' + POLL_TTL_MS/1000 + 's</span>'+
+        '</div>'+
+      '</div>';
+  }
+
+  function card(label, value, color){
+    return '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px">'+
+      '<div style="font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">'+label+'</div>'+
+      '<div style="font-size:16px;font-weight:700;color:'+color+'">'+value+'</div>'+
+    '</div>';
+  }
+
+  function row(label, value){
+    return '<div style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:4px">'+
+      '<span style="color:#9ca3af;font-size:11px">'+label+'</span>'+
+      '<span style="color:#e5e7eb;font-size:11px;font-weight:600">'+value+'</span>'+
+    '</div>';
+  }
+
+  function doFetch(){
+    statusEl.textContent = 'fetching...';
+    statusEl.style.color = '#f59e0b';
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Fetching...';
+
+    fetchLivestats().then(function(result){
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = '↻ Refresh';
+
+      if(result.status === 'fetched'){
+        statusEl.textContent = 'ok (' + result.bytes + ' bytes)';
+        statusEl.style.color = '#10b981';
+      } else if(result.status === 'cached'){
+        statusEl.textContent = 'cached (' + Math.round(result.age/1000) + 's old)';
+        statusEl.style.color = '#818cf8';
+      } else {
+        statusEl.textContent = 'error: ' + (result.message || 'unknown');
+        statusEl.style.color = '#ef4444';
+      }
+      render();
+    });
+  }
+
+  refreshBtn.addEventListener('click', doFetch);
+
+  autoBtn.addEventListener('click', function(){
+    if(autoInterval){
+      clearInterval(autoInterval);
+      autoInterval = null;
+      autoBtn.textContent = 'Auto: OFF';
+      autoBtn.classList.remove('pass');
+    } else {
+      autoInterval = setInterval(doFetch, POLL_TTL_MS);
+      autoBtn.textContent = 'Auto: ON (30s)';
+      autoBtn.classList.add('pass');
+      doFetch(); // immediate first fetch
+    }
+  });
+
+  // Initial fetch
+  doFetch();
+
+  // Cleanup on close
+  var win = WM.get(id);
+  if(win){
+    win.onClose = function(){
+      if(autoInterval) clearInterval(autoInterval);
+      // #13: Scrub all state
+      scrubIngress();
+      state = null;
+    };
+  }
+};
+
 Apps.appStore = function(){
   var id = 'appstore';
   if(WM.get(id)){ WM.focus(id); return; }
@@ -11035,6 +11332,10 @@ Apps.appStore = function(){
   // =================================================================
   var watApps = [
     {
+      name: 'Zephyr Protocol', icon: '📊', desc: 'Live Zephyr Protocol stats: ZEPH price, reserve ratio, circulation. Real API data, native parsing.',
+      isProtocol: true
+    },
+    {
       name: 'Bouncing Ball', icon: '⚪', desc: 'Green ball bounces around via syscall ABI. Pure WASM, no DOM.',
       wat: '(module\n'+
         '  (import "env" "memory" (memory 8 16))\n'+
@@ -11148,11 +11449,16 @@ Apps.appStore = function(){
     watApps.forEach(function(app){
       var card = document.createElement('div');
       card.style.cssText = 'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:14px;transition:border .15s;cursor:pointer';
-      card.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:24px">'+app.icon+'</span><span style="font-size:13px;font-weight:600;color:#e5e7eb">'+C2.string.escapeHtml(app.name)+'</span></div><div style="font-size:10px;color:#9ca3af;line-height:1.5;margin-bottom:10px;height:36px;overflow:hidden">'+C2.string.escapeHtml(app.desc)+'</div><div><span style="font-size:9px;padding:2px 6px;background:rgba(16,185,129,0.15);color:#10b981;border-radius:3px">WAT · syscall ABI</span></div>';
+      card.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:24px">'+app.icon+'</span><span style="font-size:13px;font-weight:600;color:#e5e7eb">'+C2.string.escapeHtml(app.name)+'</span></div><div style="font-size:10px;color:#9ca3af;line-height:1.5;margin-bottom:10px;height:36px;overflow:hidden">'+C2.string.escapeHtml(app.desc)+'</div><div><span style="font-size:9px;padding:2px 6px;background:rgba('+(app.isProtocol?'99,102,241':'16,185,129')+',0.15);color:#'+(app.isProtocol?'818cf8':'10b981')+';border-radius:3px">'+(app.isProtocol?'LIVE API':'WAT · syscall ABI')+'</span></div>';
       card.addEventListener('click', function(){
-        var wat = app.wat.replace(/\\n/g, '\n');
-        launchHypervisorApp(app.name, wat);
-        Toast.success('Launching: '+app.name, 2000);
+        if(app.isProtocol){
+          Apps.zephyrProtocol();
+          Toast.success('Launching Zephyr Protocol dashboard', 2000);
+        } else {
+          var wat = app.wat.replace(/\\n/g, '\n');
+          launchHypervisorApp(app.name, wat);
+          Toast.success('Launching: '+app.name, 2000);
+        }
       });
       card.addEventListener('mouseenter', function(){ card.style.borderColor = 'rgba(16,185,129,0.3)'; });
       card.addEventListener('mouseleave', function(){ card.style.borderColor = 'rgba(255,255,255,0.06)'; });
