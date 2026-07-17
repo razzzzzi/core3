@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data: blob:; style-src 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net https://zephyrprotocol.com https://corsproxy.io">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data: blob:; style-src 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net https://zephyrprotocol.com https://corsproxy.io http://remote-node.zephyrprotocol.com http://nodes.hashvault.pro">
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.39/index.js" id="wabt-loader" async></script>
-<title>Zephyr OS v7.8.0</title>
+<title>Zephyr OS v7.9.0</title>
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -221,7 +221,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
 
 <div id="boot">
   <div class="boot-logo">Zephyr OS</div>
-  <div class="boot-version">v7.8.0 — Brutal security deepdive (SoA + view cache + double buffering) (writePixel batching + cached views)</div>
+  <div class="boot-version">v7.9.0 — Remote daemon support (SoA + view cache + double buffering) (writePixel batching + cached views)</div>
   <div class="boot-spinner"></div>
   <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
   <div class="boot-tip" id="boot-tip">Initializing kernel partitions...</div>
@@ -270,7 +270,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
     <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#10b981,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;box-shadow:0 2px 8px rgba(16,185,129,0.3)">🌀</div>
     <div>
       <div style="font-size:13px;font-weight:600;color:#f3f4f6">Zephyr User</div>
-      <div style="font-size:10px;color:#9ca3af">v7.8.0 · Brutal security</div>
+      <div style="font-size:10px;color:#9ca3af">v7.9.0 · Remote daemon</div>
     </div>
   </div>
   <input class="start-search" type="text" placeholder="Search apps..." id="start-search">
@@ -1446,7 +1446,7 @@ function hasPermission(manifest, perm){
 var C1 = (function(){
   var bootTime = performance.now();
   var state = {
-    version: 'Zephyr-OS-7.8.0',
+    version: 'Zephyr-OS-7.9.0',
     bootTime: bootTime,
     canvasId: 'wallpaper-canvas',
     memoryBase: 65536,
@@ -3931,7 +3931,7 @@ var AUDIT_FIXES = (__ZEPHYR_AUDIT) ? [
   {id:527, title:'State buffer 32 bytes (#5)', severity:'medium', where:'state', evidence:'4x8=32'},
   {id:528, title:'RPC nonce increments (#18)', severity:'high', where:'nonce', evidence:'1->2'},
   {id:529, title:'Scrub order correct (#10 #13)', severity:'critical', where:'scrub', evidence:'ephemeral then ingress'},
-  {id:530, title:'v7.3.0 100 security tests (530 total)', severity:'low', where:'version', evidence:'Zephyr-OS-7.8.0'},
+  {id:530, title:'v7.3.0 100 security tests (530 total)', severity:'low', where:'version', evidence:'Zephyr-OS-7.9.0'},
   {id:531, title:'Max i64 atomic parse (#1)', severity:'critical', where:'parser', evidence:'9223372036854775807'},
   {id:532, title:'Negative atomic rejection (#2)', severity:'critical', where:'parser', evidence:'negative detected'},
   {id:533, title:'Float atomic rejection (#3)', severity:'high', where:'parser', evidence:'decimal detected'},
@@ -4031,7 +4031,7 @@ var AUDIT_FIXES = (__ZEPHYR_AUDIT) ? [
   {id:627, title:'Full 2MB zeroized (#97)', severity:'critical', where:'panic', evidence:'all 0x00'},
   {id:628, title:'Instance terminated post-panic (#98)', severity:'critical', where:'panic', evidence:'RuntimeError'},
   {id:629, title:'State locked after catch (#99)', severity:'critical', where:'panic', evidence:'locked'},
-  {id:630, title:'v7.4.0 200 total security tests (630 total)', severity:'low', where:'version', evidence:'Zephyr-OS-7.8.0'},
+  {id:630, title:'v7.4.0 200 total security tests (630 total)', severity:'low', where:'version', evidence:'Zephyr-OS-7.9.0'},
   {id:631, title:'Multisig experimental bypass (#1)', severity:'critical', where:'multisig', evidence:'denied'},
   {id:632, title:'Key image hex overflow (#2)', severity:'critical', where:'keyimage', evidence:'65>64 bytes'},
   {id:633, title:'Key image race condition (#3)', severity:'critical', where:'keyimage', evidence:'atomic lock'},
@@ -8876,7 +8876,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   369: function(k){ var pm = k.getPartitionRaw('C3.6'); var t = 'C3.94.'+Date.now(); pm.invoke('create', t, 'C3.1'); var p = k.getPartitionRaw(t); if(!p) return {pass:false, detail:'create failed'}; p.export('noop', function(){return 1;}); var before = p.exportCount; pm.invoke('destroy', t); try{ var after = p.exportCount; }catch(e){ var after = -1; } return {pass:before === 1, detail:'WM cleanup destroys partition exports (FIX 10): before='+before+', after='+after}; },
   370: function(k){ var m = k.getPartitionRaw('C3.2'); if(!m.hasMethod('ensureMemory')) return {pass:false, detail:'no ensureMemory'}; var before = m.invoke('hasWasmMemory'); try{ m.invoke('ensureMemory'); }catch(e){ return {pass:false, detail:'ensureMemory threw: '+e.message}; } var after = m.invoke('hasWasmMemory'); return {pass:after === true, detail:'boot calls ensureMemory (FIX 11): before='+before+', after='+after}; },
   371: function(k){ var errs = k.getErrors(); var realFatals = 0; for(var i=0;i<errs.length;i++){ if(errs[i].severity === 'FATAL' && errs[i].partition !== 'TEST' && errs[i].partition !== 'T' && errs[i].partition !== 'RING_TEST'){ realFatals++; } } return {pass:true, detail:'audit cleanup preserves real FATals (FIX 7): count='+realFatals}; },
-  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.8.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v7.8.0 brutal security (730 tests)'}; },
+  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.9.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
   373: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=[]; var count=0; sch.invoke("add", function(){ count++; if(count<3){ sch.invoke("add", function(){ ran.push("child"); }, "HIGH"); } ran.push("parent"); }, "NORMAL"); sch.invoke("tick", 100); sch.invoke("clearAll"); return {pass: count === 1, detail:"Scheduler reentrancy guarded (FIX 1+2): parent ran "+count+" time(s)"}; },
   374: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=0; sch.invoke("add", function(){ ran++; }, "NORMAL"); sch.invoke("tick", 0); sch.invoke("clearAll"); return {pass:ran===0, detail:"budget=0 runs 0 tasks (FIX 3): ran="+ran}; },
   375: function(k){ var c4=k.getPartitionRaw("C3.4"); if(!c4.hasMethod("instantiate")) return {pass:false, detail:"no instantiate"}; return {pass:true, detail:"C3.4 uses inst.exports.memory (FIX 4)"}; },
@@ -8888,7 +8888,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   381: function(k){ var el = window.document.querySelector('meta[http-equiv="Content-Security-Policy"]'); if(!el) return {pass:false, detail:"no CSP meta"}; var csp = el.content; var hasUE = /'unsafe-eval'/.test(csp); var hasWUE = /'wasm-unsafe-eval'/.test(csp); return {pass:!hasUE, detail:'CSP: unsafe-eval='+hasUE+' wasm-unsafe-eval='+hasWUE+' (v4.1.0)'}; },
   382: function(k){ var c2=k.getPartitionRaw("C3.2"); if(!c2.hasMethod("alloc")) return {pass:false, detail:"no alloc"}; if(!c2.hasMethod("allocBlock")) return {pass:false, detail:"no allocBlock"}; if(!c2.hasMethod("freeBlock")) return {pass:false, detail:"no freeBlock"}; return {pass:true, detail:"C3.2 alloc/allocBlock/freeBlock present (deepdive v2.0.6)"}; },
   383: function(k){ var ev=k.getPartitionRaw("C3.5"); if(!ev.hasMethod("getLastMods")) return {pass:false, detail:"no getLastMods"}; return {pass:true, detail:"C3.5 getLastMods present; reset on blur (FIX 22)"}; },
-  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-7.8.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v7.8.0 brutal security (730 tests)"}; },
+  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-7.9.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v7.9.0 remote daemon (730 tests)"}; },
   385: function(k){ if(!k.linker || typeof k.linker.assertCap !== 'function') return {pass:false, detail:'no Linker'}; try{ k.linker.assertCap('C3.15','C3.12'); }catch(e){ return {pass:false, detail:'allowed cap threw: '+e.message}; } return {pass:true, detail:'Linker allows C3.15 -> C3.12 (#1)'}; },
   386: function(k){ if(!k.linker) return {pass:false, detail:'no Linker'}; var threw=false; try{ k.linker.assertCap('C3.15','C3.4'); }catch(e){ threw=true; if(e.message.indexOf('LINKER_CAP_DENIED')<0) return {pass:false, detail:'wrong error: '+e.message}; } return {pass:threw, detail:'Linker denies C3.15 -> C3.4 (#1)'}; },
   387: function(k){ if(typeof __ZEPHYR_AUDIT === 'undefined') return {pass:false, detail:'no __ZEPHYR_AUDIT flag'}; return {pass:__ZEPHYR_AUDIT===true, detail:'__ZEPHYR_AUDIT='+__ZEPHYR_AUDIT+' (#14)'}; },
@@ -8904,7 +8904,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   397: function(k){ if(typeof Apps.launchWorkerApp !== 'function') return {pass:false, detail:'no launchWorkerApp'}; return {pass:true, detail:'Apps.launchWorkerApp present (#18)'}; },
   398: function(k){ if(typeof showManifestConsent !== 'function') return {pass:false, detail:'no showManifestConsent'}; return {pass:true, detail:'Consent dialog present (#19)'}; },
   399: function(k){ var ds=k.getPartitionRaw('C3.15'); if(!ds.hasMethod('isGLCompositor')) return {pass:false, detail:'no isGLCompositor'}; var gl=ds.invoke('isGLCompositor'); return {pass:typeof gl === 'boolean', detail:'GL compositor: '+gl+' (#20)'}; },
-  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.8.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.8.0 brutal security (730 tests)'}; },
+  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.9.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
   401: function(k){ if(!k.hw) return {pass:false, detail:'no HardwareBridge'}; if(typeof k.hw.isSAB !== 'function') return {pass:false, detail:'no isSAB'}; return {pass:true, detail:'HardwareBridge present; SAB='+k.hw.isSAB()+' (#1)'}; },
   402: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; k.hw.setMouseState(100, 200, 1); var s=k.hw.getMouseState(); return {pass:s.x===100&&s.y===200&&s.buttons===1, detail:'event coalescer: x='+s.x+' y='+s.y+' btn='+s.buttons+' (#18)'}; },
   403: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; var t=k.hw.getTimeOrigin(); return {pass:typeof t==='number'&&t>0, detail:'timeOrigin='+t+' (#13)'}; },
@@ -8924,7 +8924,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   417: function(k){ if(!k.wakeLock) return {pass:false, detail:'no wakeLock'}; return {pass:typeof k.wakeLock.request==='function', detail:'WakeLock present (#8)'}; },
   418: function(k){ if(!k.opfs) return {pass:false, detail:'no opfs'}; if(!k.transport) return {pass:false, detail:'no transport'}; if(!k.audio) return {pass:false, detail:'no audio'}; if(!k.simd) return {pass:false, detail:'no simd'}; return {pass:true, detail:'OPFS+WebTransport+Audio+SIMD present (#9+#10+#12+#16)'}; },
   419: function(k){ if(!k.boundary) return {pass:false, detail:'no boundary'}; if(!k.staticLinker) return {pass:false, detail:'no staticLinker'}; if(!k.gcFree) return {pass:false, detail:'no gcFree'}; return {pass:true, detail:'Boundary+StaticLinker+GCFree present (#2+#14+#15)'}; },
-  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.8.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.8.0 brutal security (730 tests)'}; },
+  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.9.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
   421: function(k){ if(!k.wat) return {pass:false, detail:'no WATCompiler'}; if(typeof k.wat.compile !== 'function') return {pass:false, detail:'no compile'}; return {pass:true, detail:'WATCompiler present (wabt.js integration)'}; },
   422: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; return k.wat.init().then(function(ok){ return {pass:ok, detail:'wabt.js loaded: '+ok}; }).catch(function(e){ return {pass:false, detail:'init failed: '+e.message}; }); },
   423: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; var wat = '(module (func (export \"add\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))'; return k.wat.compile(wat).then(function(bytes){ if(!(bytes instanceof Uint8Array) || bytes.length < 8) return {pass:false, detail:'bytes invalid'}; return {pass:true, detail:'WAT compiled: '+bytes.length+' bytes'}; }).catch(function(e){ return {pass:false, detail:'compile failed: '+e.message}; }); },
@@ -9034,7 +9034,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   527: function(k){ var state_size = 32; var four_balances = 4 * 8; return {pass: state_size === four_balances, detail:'State buffer is 32 bytes (4 x i64 balances) (#5 Layer 2)'}; },
   528: function(k){ var rpc_nonce = 1; rpc_nonce = rpc_nonce + 1; return {pass: rpc_nonce === 2, detail:'RPC nonce increments after each use (#18)'}; },
   529: function(k){ var scrub_order = ['decrypt', 'parse', 'encrypt_state', 'commit', 'scrub_ephemeral', 'scrub_ingress']; var correct = scrub_order[4] === 'scrub_ephemeral' && scrub_order[5] === 'scrub_ingress'; return {pass: correct, detail:'Scrub order: ephemeral then ingress after commit (#10 #13)'}; },
-  530: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.8.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.3.0 triple-hardened wallet + 100 security tests (530 total)'}; },
+  530: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.9.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.3.0 triple-hardened wallet + 100 security tests (530 total)'}; },
   531: function(k){ var s='9223372036854775807'; var v=parseFloat(s); return {pass: v === 9223372036854776000, detail:'Max i64 string parsed without crash (#1)'}; },
   532: function(k){ var s='-1000000000000'; var v=parseFloat(s); return {pass: v < 0, detail:'Negative atomic detected (#2)'}; },
   533: function(k){ var s='1000000000000.5'; var v=parseFloat(s); var hasDecimal = s.indexOf('.') >= 0; return {pass: hasDecimal, detail:'Floating-point atomic detected at decimal (#3)'}; },
@@ -9134,7 +9134,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   627: function(k){ var mem = new Uint8Array(2097152); mem[0] = 0xFF; mem[65536] = 0xAA; mem[131072] = 0xBB; mem.fill(0); return {pass: mem[0]===0 && mem[65536]===0 && mem[131072]===0, detail:'Full 2MB memory zeroized post-panic (#97)'}; },
   628: function(k){ var instanceAlive = false; try { throw new Error('unreachable'); } catch(e) { instanceAlive = false; } return {pass: !instanceAlive, detail:'Instance terminated after unreachable (#98)'}; },
   629: function(k){ var stateLocked = true; try { throw new Error('trap'); } catch(e) { stateLocked = true; } return {pass: stateLocked, detail:'JS cannot re-init after catch (state locked) (#99)'}; },
-  630: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.8.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.4.0 200 total security tests (630 total)'}; },
+  630: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-7.9.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.4.0 200 total security tests (630 total)'}; },
   631: function(k){ var enableMultisig = false; var allowed = enableMultisig; return {pass: !allowed, detail:'Multisig experimental flag bypass blocked (#1)'}; },
   632: function(k){ var hexLen = 65; var maxKeyImage = 64; return {pass: hexLen > maxKeyImage, detail:'65-byte key image hex overflow detected (#2)'}; },
   633: function(k){ var racePrevented = true; return {pass: racePrevented, detail:'Key image freeze/thaw race prevented by atomic lock (#3)'}; },
@@ -11588,10 +11588,23 @@ Apps.zephyrWallet = function(){
       '<span style="font-size:13px;color:#6ee7b7;font-weight:600">🔐 Zephyr Wallet — Triple Hardened</span>'+
       '<span id="zw-status" style="font-size:10px;color:#9ca3af">disconnected</span>'+
     '</div>'+
-    '<div style="padding:8px 14px;background:#0f0f17;border-bottom:1px solid rgba(255,255,255,0.03);display:flex;gap:6px;align-items:center">'+
-      '<input id="zw-rpc-host" type="text" value="127.0.0.1" placeholder="RPC Host" style="flex:1;padding:5px 8px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:#e5e7eb;font-size:11px">'+
-      '<input id="zw-rpc-port" type="text" value="17777" placeholder="Port" style="width:60px;padding:5px 8px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:#e5e7eb;font-size:11px">'+
-      '<button class="btn sec" id="zw-connect" style="font-size:11px;padding:5px 10px">Connect</button>'+
+    '<div style="padding:8px 14px;background:#0f0f17;border-bottom:1px solid rgba(255,255,255,0.03);display:flex;flex-direction:column;gap:6px">'+
+      '<div style="display:flex;gap:6px;align-items:center">'+
+        '<select id="zw-node-type" style="padding:5px 8px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:#e5e7eb;font-size:11px">'+
+          '<option value="daemon">Daemon (Remote)</option>'+
+          '<option value="wallet">Wallet RPC (Local)</option>'+
+        '</select>'+
+        '<select id="zw-node-preset" style="padding:5px 8px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:#e5e7eb;font-size:11px">'+
+          '<option value="remote-node.zephyrprotocol.com:17767">remote-node.zephyrprotocol.com</option>'+
+          '<option value="nodes.hashvault.pro:17767">nodes.hashvault.pro</option>'+
+          '<option value="custom">Custom...</option>'+
+        '</select>'+
+      '</div>'+
+      '<div id="zw-custom-row" style="display:none;gap:6px;align-items:center">'+
+        '<input id="zw-rpc-host" type="text" value="127.0.0.1" placeholder="Host" style="flex:1;padding:5px 8px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:#e5e7eb;font-size:11px">'+
+        '<input id="zw-rpc-port" type="text" value="17767" placeholder="Port" style="width:60px;padding:5px 8px;background:#0a0a0f;border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:#e5e7eb;font-size:11px">'+
+      '</div>'+
+      '<button class="btn sec" id="zw-connect" style="font-size:11px;padding:5px 10px;align-self:flex-start">Connect</button>'+
     '</div>'+
     '<div id="zw-dashboard" style="flex:1;overflow-y:auto;padding:14px;font-size:12px;color:#e5e7eb"></div>'+
     '<div style="padding:8px 14px;background:#0f0f17;border-top:1px solid rgba(255,255,255,0.05);display:flex;gap:6px">'+
@@ -11631,16 +11644,168 @@ Apps.zephyrWallet = function(){
   }
 
   // =================================================================
+  // DAEMON RPC: fetch blockchain info from remote node
+  // =================================================================
+  function daemonRpcCall(method, params){
+    // Daemon RPC REST endpoints: /get_info, /get_fee_estimate
+    // These are on non-standard port 17767 — CORS proxies typically can't reach them
+    // Direct connection works when served from same origin or when CORS is disabled
+    var url = rpcEndpoint + '/' + method;
+
+    return fetch(url)
+      .then(function(resp){
+        if(!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.arrayBuffer();
+      })
+      .catch(function(e){
+        // Direct fetch failed (CORS or network) — try corsproxy.io
+        return fetch('https://corsproxy.io/?' + encodeURIComponent(url))
+          .then(function(resp){
+            if(!resp.ok) throw new Error('Proxy HTTP ' + resp.status);
+            return resp.arrayBuffer();
+          })
+          .catch(function(e2){
+            // Both failed — daemon on non-standard port is unreachable from browser
+            throw new Error('Daemon unreachable (CORS + proxy failed). Run local proxy or use Wallet RPC mode.');
+          });
+      });
+  }
+
+  function fetchDaemonInfo(){
+    var now = Date.now();
+    if(now - lastFetchTime < FETCH_TTL && daemonInfo){
+      return Promise.resolve({ status: 'cached' });
+    }
+
+    return daemonRpcCall('get_info', {}).then(function(buf){
+      if(!buf) return { status: 'error', message: 'daemon unreachable' };
+
+      var bytes = new Uint8Array(buf);
+      var len = Math.min(bytes.length, 65536);
+      ingressBuf.set(bytes.subarray(0, len));
+
+      // Parse daemon info fields natively (no JSON.parse)
+      daemonInfo = {};
+      var p;
+
+      p = extractF64(ingressBuf, len, '"height"');
+      if(p !== null) daemonInfo.height = p;
+
+      p = extractF64(ingressBuf, len, '"difficulty"');
+      if(p !== null) daemonInfo.difficulty = p;
+
+      p = extractF64(ingressBuf, len, '"tx_count"');
+      if(p !== null) daemonInfo.txCount = p;
+
+      p = extractF64(ingressBuf, len, '"tx_pool_size"');
+      if(p !== null) daemonInfo.txPoolSize = p;
+
+      p = extractF64(ingressBuf, len, '"incoming_connections_count"');
+      if(p !== null) daemonInfo.incomingConnections = p;
+
+      p = extractF64(ingressBuf, len, '"outgoing_connections_count"');
+      if(p !== null) daemonInfo.outgoingConnections = p;
+
+      p = extractString(ingressBuf, len, '"top_block_hash"');
+      if(p !== null) daemonInfo.topBlockHash = p;
+
+      p = extractString(ingressBuf, len, '"status"');
+      if(p !== null) daemonInfo.status = p;
+
+      p = extractF64(ingressBuf, len, '"synchronized"');
+      if(p !== null) daemonInfo.synchronized = p === 1;
+
+      p = extractF64(ingressBuf, len, '"mainnet"');
+      if(p !== null) daemonInfo.mainnet = p === 1;
+
+      // Also fetch fee estimate
+      return daemonRpcCall('get_fee_estimate', {grace_blocks: 10}).then(function(feeBuf){
+        if(feeBuf){
+          var feeBytes = new Uint8Array(feeBuf);
+          var feeLen = Math.min(feeBytes.length, 65536);
+          // Parse fee from the fee response
+          var feeVal = extractF64(feeBytes, feeLen, '"fee"');
+          if(feeVal !== null) daemonInfo.fee = feeVal;
+        }
+
+        scrubIngress();
+        scrubEphemeral();
+        lastFetchTime = now;
+        return { status: 'fetched' };
+      }).catch(function(){
+        scrubIngress();
+        lastFetchTime = now;
+        return { status: 'fetched' };
+      });
+    }).catch(function(e){
+      return { status: 'error', message: e.message };
+    });
+  }
+
+  function card(label, value, color){
+    return '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px"><div style="font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">'+label+'</div><div style="font-size:16px;font-weight:700;color:'+color+'">'+value+'</div></div>';
+  }
+
+  function renderDaemonDashboard(){
+    if(!daemonInfo){
+      dashboardEl.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#6b7280">No daemon data</div>';
+      return;
+    }
+
+    var age = lastFetchTime > 0 ? Math.round((Date.now() - lastFetchTime)/1000) + 's ago' : 'never';
+    var syncStatus = daemonInfo.synchronized ? '<span style="color:#10b981">✓ Synced</span>' : '<span style="color:#f59e0b">Syncing...</span>';
+    var netStatus = daemonInfo.mainnet ? 'Mainnet' : 'Testnet';
+
+    dashboardEl.innerHTML =
+      '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;font-weight:600">Blockchain Info ('+netStatus+')</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">'+
+        card('Block Height', (daemonInfo.height || 0).toLocaleString(), '#10b981') +
+        card('Difficulty', (daemonInfo.difficulty || 0).toExponential(2), '#818cf8') +
+        card('Transactions', (daemonInfo.txCount || 0).toLocaleString(), '#f59e0b') +
+        card('Mempool', (daemonInfo.txPoolSize || 0) + ' txs', '#f43f5e') +
+        card('Connections', (daemonInfo.incomingConnections || 0) + ' in / ' + (daemonInfo.outgoingConnections || 0) + ' out', '#06b6d4') +
+        card('Fee Estimate', daemonInfo.fee ? (daemonInfo.fee / 1e12).toFixed(6) + ' ZEPH' : '—', '#a78bfa') +
+      '</div>'+
+      '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;font-weight:600">Top Block</div>'+
+      '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-bottom:14px">'+
+        '<div style="font-size:10px;color:#9ca3af;word-break:break-all">'+C2.string.escapeHtml(daemonInfo.topBlockHash || '—')+'</div>'+
+      '</div>'+
+      '<div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:10px">'+
+        '<div style="display:flex;justify-content:space-between;font-size:10px;color:#6b7280">'+
+          '<span>'+syncStatus+'</span>'+
+          '<span>Daemon: '+daemonInfo.status+'</span>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;font-size:10px;color:#6b7280;margin-top:4px">'+
+          '<span>Last fetch: '+age+'</span>'+
+          '<span>Node: '+C2.string.escapeHtml(rpcEndpoint.replace('http://',''))+'</span>'+
+        '</div>'+
+      '</div>'+
+      '<div style="margin-top:14px;padding:10px;background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.15);border-radius:6px">'+
+        '<div style="font-size:10px;color:#818cf8">💡 Daemon mode: blockchain info only. For wallet operations (balance, send), run zephyr-wallet-rpc locally and switch to Wallet RPC mode.</div>'+
+      '</div>';
+  }
+
+  // =================================================================
   // RENDER DASHBOARD
   // =================================================================
   function renderDashboard(){
     if(!connected){
       dashboardEl.innerHTML =
-        '<div style="text-align:center;padding:40px 20px;color:#6b7280">'+
+        '<div style="text-align:center;padding:30px 20px;color:#6b7280">'+
           '<div style="font-size:48px;margin-bottom:12px">🔐</div>'+
           '<div style="font-size:14px;color:#9ca3af;margin-bottom:8px">Wallet Disconnected</div>'+
-          '<div style="font-size:11px">Enter your Zephyr wallet-rpc host and port, then click Connect.</div>'+
-          '<div style="font-size:10px;margin-top:16px;color:#4b5563">Triple-hardened: transit (XOR) + rest (XOR) + execution (zeroize)</div>'+
+          '<div style="font-size:11px;margin-bottom:16px">Select a node type and click Connect.</div>'+
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:left;max-width:380px;margin:0 auto">'+
+            '<div style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.15);border-radius:6px;padding:10px">'+
+              '<div style="font-size:11px;color:#818cf8;font-weight:600;margin-bottom:4px">Daemon (Remote)</div>'+
+              '<div style="font-size:10px;color:#6b7280">Connect to remote-node.zephyrprotocol.com:17767 or nodes.hashvault.pro:17767. View blockchain info: height, difficulty, fees, mempool.</div>'+
+            '</div>'+
+            '<div style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:6px;padding:10px">'+
+              '<div style="font-size:11px;color:#10b981;font-weight:600;margin-bottom:4px">Wallet RPC (Local)</div>'+
+              '<div style="font-size:10px;color:#6b7280">Run zephyr-wallet-rpc locally (port 17777). Full wallet ops: balance, send, history.</div>'+
+            '</div>'+
+          '</div>'+
+          '<div style="font-size:10px;margin-top:16px;color:#4b5563">Triple-hardened: random keys (crypto.getRandomValues) + transit (XOR) + execution (zeroize)</div>'+
         '</div>';
       return;
     }
@@ -11800,6 +11965,41 @@ Apps.zephyrWallet = function(){
   // =================================================================
   // EVENT HANDLERS
   // =================================================================
+  var nodeType = 'daemon'; // 'daemon' or 'wallet'
+  var daemonInfo = null; // stores get_info result
+
+  // Node type selector
+  document.getElementById('zw-node-type').addEventListener('change', function(){
+    nodeType = this.value;
+    var portInput = document.getElementById('zw-rpc-port');
+    if(nodeType === 'wallet'){
+      portInput.value = '17777';
+    } else {
+      portInput.value = '17767';
+    }
+  });
+
+  // Preset selector
+  document.getElementById('zw-node-preset').addEventListener('change', function(){
+    var customRow = document.getElementById('zw-custom-row');
+    if(this.value === 'custom'){
+      customRow.style.display = 'flex';
+    } else {
+      customRow.style.display = 'none';
+      var parts = this.value.split(':');
+      document.getElementById('zw-rpc-host').value = parts[0];
+      document.getElementById('zw-rpc-port').value = parts[1] || '17767';
+    }
+  });
+
+  // Initialize with first preset
+  (function(){
+    var preset = document.getElementById('zw-node-preset');
+    var parts = preset.value.split(':');
+    document.getElementById('zw-rpc-host').value = parts[0];
+    document.getElementById('zw-rpc-port').value = parts[1] || '17767';
+  })();
+
   connectBtn.addEventListener('click', function(){
     var host = document.getElementById('zw-rpc-host').value.trim() || '127.0.0.1';
     // SSRF blocklist: reject cloud metadata endpoints and internal ranges
@@ -11811,46 +12011,78 @@ Apps.zephyrWallet = function(){
       renderDashboard();
       return;
     }
-    rpcEndpoint = host.indexOf('http') === 0 ? host : 'http://' + host;
-    rpcPort = parseInt(document.getElementById('zw-rpc-port').value, 10) || 17777;
+    rpcPort = parseInt(document.getElementById('zw-rpc-port').value, 10) || (nodeType === 'wallet' ? 17777 : 17767);
+    rpcEndpoint = host.indexOf('http') === 0 ? host : 'http://' + host + ':' + rpcPort;
     statusEl.textContent = 'connecting...';
     statusEl.style.color = '#f59e0b';
 
-    // Try to fetch balance to test connection
-    fetchBalance().then(function(result){
-      if(result.status === 'fetched' || result.status === 'no_data' || result.status === 'cached'){
-        connected = true;
-        statusEl.textContent = 'connected';
-        statusEl.style.color = '#10b981';
-        renderDashboard();
-        Toast.success('Wallet connected', 2000);
-      } else {
+    if(nodeType === 'daemon'){
+      // Daemon mode: fetch blockchain info (get_info, get_fee_estimate)
+      fetchDaemonInfo().then(function(result){
+        if(result.status === 'fetched'){
+          connected = true;
+          statusEl.textContent = 'connected (daemon)';
+          statusEl.style.color = '#10b981';
+          renderDaemonDashboard();
+          Toast.success('Connected to daemon: ' + host, 2000);
+        } else {
+          connected = false;
+          statusEl.textContent = 'failed: ' + (result.message || 'no response');
+          statusEl.style.color = '#ef4444';
+          renderDashboard();
+        }
+      }).catch(function(e){
         connected = false;
-        statusEl.textContent = 'failed: ' + (result.message || 'no response');
+        statusEl.textContent = 'error: ' + e.message;
         statusEl.style.color = '#ef4444';
         renderDashboard();
-      }
-    }).catch(function(e){
-      connected = false;
-      statusEl.textContent = 'error: ' + e.message;
-      statusEl.style.color = '#ef4444';
-      renderDashboard();
-    });
+      });
+    } else {
+      // Wallet RPC mode: fetch balance
+      fetchBalance().then(function(result){
+        if(result.status === 'fetched' || result.status === 'no_data' || result.status === 'cached'){
+          connected = true;
+          statusEl.textContent = 'connected';
+          statusEl.style.color = '#10b981';
+          renderDashboard();
+          Toast.success('Wallet connected', 2000);
+        } else {
+          connected = false;
+          statusEl.textContent = 'failed: ' + (result.message || 'no response');
+          statusEl.style.color = '#ef4444';
+          renderDashboard();
+        }
+      }).catch(function(e){
+        connected = false;
+        statusEl.textContent = 'error: ' + e.message;
+        statusEl.style.color = '#ef4444';
+        renderDashboard();
+      });
+    }
   });
 
   refreshBtn.addEventListener('click', function(){
     if(!connected){ Toast.error('Connect first', 2000); return; }
     statusEl.textContent = 'fetching...';
     statusEl.style.color = '#f59e0b';
-    fetchBalance().then(function(result){
-      statusEl.textContent = result.status;
-      statusEl.style.color = result.status === 'fetched' ? '#10b981' : '#f59e0b';
-      renderDashboard();
-    });
+    if(nodeType === 'daemon'){
+      fetchDaemonInfo().then(function(result){
+        statusEl.textContent = result.status;
+        statusEl.style.color = result.status === 'fetched' ? '#10b981' : '#f59e0b';
+        renderDaemonDashboard();
+      });
+    } else {
+      fetchBalance().then(function(result){
+        statusEl.textContent = result.status;
+        statusEl.style.color = result.status === 'fetched' ? '#10b981' : '#f59e0b';
+        renderDashboard();
+      });
+    }
   });
 
   sendBtn.addEventListener('click', function(){
     if(!connected){ Toast.error('Connect first', 2000); return; }
+    if(nodeType === 'daemon'){ Toast.error('Send requires Wallet RPC mode (local zephyr-wallet-rpc)', 3000); return; }
     showSendDialog();
   });
 
@@ -12117,12 +12349,6 @@ Apps.zephyrProtocol = function(){
       '</div>';
   }
 
-  function card(label, value, color){
-    return '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px">'+
-      '<div style="font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">'+label+'</div>'+
-      '<div style="font-size:16px;font-weight:700;color:'+color+'">'+value+'</div>'+
-    '</div>';
-  }
 
   function row(label, value){
     return '<div style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:4px">'+
