@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data: blob:; style-src 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net https://zephyrprotocol.com https://corsproxy.io https://api.allorigins.win http://remote-node.zephyrprotocol.com http://nodes.hashvault.pro">
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.39/index.js" id="wabt-loader" async></script>
-<title>Zephyr OS v8.3.0</title>
+<title>Zephyr Wallet v8.4.0</title>
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -214,14 +214,68 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
 #home-close{position:fixed;top:20px;right:30px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#9ca3af;font-size:20px;transition:background .15s}
 #home-close:hover{background:rgba(255,255,255,0.12);color:#e5e7eb}
 .tb-app[data-app="home"]{position:relative}
+
+/* ===================================================================== */
+/* v8.4.0 — WALLET-ONLY BUILD                                            */
+/* ===================================================================== */
+/* Hide the entire desktop shell (taskbar, start menu, desktop icons,    */
+/* home screen, context menu, wallpaper overlay). Keep the bare canvas   */
+/* + #windows container so the WM still has a place to mount the wallet  */
+/* window. The wallet window itself is then forced to full-screen with   */
+/* no titlebar and no resizer.                                           */
+/* ===================================================================== */
+body.wallet-only #taskbar,
+body.wallet-only #start-menu,
+body.wallet-only #desktop #icons,
+body.wallet-only #ctx-menu,
+body.wallet-only #home-screen,
+body.wallet-only #wallpaper-overlay,
+body.wallet-only .quick-settings,
+body.wallet-only #qs-panel { display:none !important; }
+
+/* Wallet-only: dim the wallpaper to a clean dark surface so the wallet  */
+/* stands out as the sole focus.                                         */
+body.wallet-only #wallpaper-canvas { filter:brightness(0.25) saturate(0.5); }
+
+/* Wallet-only: the wallet window becomes the full viewport. */
+body.wallet-only #windows .window {
+  position:fixed !important;
+  left:0 !important; top:0 !important;
+  width:100vw !important; height:100vh !important;
+  border-radius:0 !important; border:none !important;
+  box-shadow:none !important;
+}
+body.wallet-only #windows .window .titlebar { display:none !important; }
+body.wallet-only #windows .window .resizer  { display:none !important; }
+body.wallet-only #windows .window .win-content {
+  height:100vh !important;
+  max-height:100vh !important;
+  border-radius:0 !important;
+  overflow-y:auto;
+}
+
+/* Wallet-only: wallet content should center on wide viewports */
+body.wallet-only #zw-dashboard,
+body.wallet-only #zw-content {
+  max-width:1100px;
+  margin:0 auto;
+}
+
+/* Wallet-only boot tip — make it clear we're going straight to wallet */
+body.wallet-only .boot-logo { letter-spacing:0.04em; }
+body.wallet-only .boot-version { color:#10b981; }
+
+/* Wallet-only: ensure taskbar clock/tray never resurface even if JS adds them later */
+body.wallet-only #tray,
+body.wallet-only #clock { display:none !important; }
 </style>
 </head>
-<body>
+<body class="wallet-only">
 
 
 <div id="boot">
-  <div class="boot-logo">Zephyr OS</div>
-  <div class="boot-version">v8.3.0 — Targeted JSON Extractor (WASM-native send_raw_transaction response parser)</div>
+  <div class="boot-logo">Zephyr Wallet</div>
+  <div class="boot-version">v8.4.0 — Wallet-only build (full-screen Zephyr Wallet, desktop shell hidden)</div>
   <div class="boot-spinner"></div>
   <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
   <div class="boot-tip" id="boot-tip">Initializing kernel partitions...</div>
@@ -1446,7 +1500,7 @@ function hasPermission(manifest, perm){
 var C1 = (function(){
   var bootTime = performance.now();
   var state = {
-    version: 'Zephyr-OS-8.3.0',
+    version: 'Zephyr-OS-8.4.0',
     bootTime: bootTime,
     canvasId: 'wallpaper-canvas',
     memoryBase: 65536,
@@ -3937,7 +3991,7 @@ var AUDIT_FIXES = (__ZEPHYR_AUDIT) ? [
   {id:527, title:'State buffer 32 bytes (#5)', severity:'medium', where:'state', evidence:'4x8=32'},
   {id:528, title:'RPC nonce increments (#18)', severity:'high', where:'nonce', evidence:'1->2'},
   {id:529, title:'Scrub order correct (#10 #13)', severity:'critical', where:'scrub', evidence:'ephemeral then ingress'},
-  {id:530, title:'v7.3.0 100 security tests (530 total)', severity:'low', where:'version', evidence:'Zephyr-OS-8.3.0'},
+  {id:530, title:'v7.3.0 100 security tests (530 total)', severity:'low', where:'version', evidence:'Zephyr-OS-8.4.0'},
   {id:531, title:'Max i64 atomic parse (#1)', severity:'critical', where:'parser', evidence:'9223372036854775807'},
   {id:532, title:'Negative atomic rejection (#2)', severity:'critical', where:'parser', evidence:'negative detected'},
   {id:533, title:'Float atomic rejection (#3)', severity:'high', where:'parser', evidence:'decimal detected'},
@@ -4037,7 +4091,7 @@ var AUDIT_FIXES = (__ZEPHYR_AUDIT) ? [
   {id:627, title:'Full 2MB zeroized (#97)', severity:'critical', where:'panic', evidence:'all 0x00'},
   {id:628, title:'Instance terminated post-panic (#98)', severity:'critical', where:'panic', evidence:'RuntimeError'},
   {id:629, title:'State locked after catch (#99)', severity:'critical', where:'panic', evidence:'locked'},
-  {id:630, title:'v7.4.0 200 total security tests (630 total)', severity:'low', where:'version', evidence:'Zephyr-OS-8.3.0'},
+  {id:630, title:'v7.4.0 200 total security tests (630 total)', severity:'low', where:'version', evidence:'Zephyr-OS-8.4.0'},
   {id:631, title:'Multisig experimental bypass (#1)', severity:'critical', where:'multisig', evidence:'denied'},
   {id:632, title:'Key image hex overflow (#2)', severity:'critical', where:'keyimage', evidence:'65>64 bytes'},
   {id:633, title:'Key image race condition (#3)', severity:'critical', where:'keyimage', evidence:'atomic lock'},
@@ -8887,7 +8941,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   369: function(k){ var pm = k.getPartitionRaw('C3.6'); var t = 'C3.94.'+Date.now(); pm.invoke('create', t, 'C3.1'); var p = k.getPartitionRaw(t); if(!p) return {pass:false, detail:'create failed'}; p.export('noop', function(){return 1;}); var before = p.exportCount; pm.invoke('destroy', t); try{ var after = p.exportCount; }catch(e){ var after = -1; } return {pass:before === 1, detail:'WM cleanup destroys partition exports (FIX 10): before='+before+', after='+after}; },
   370: function(k){ var m = k.getPartitionRaw('C3.2'); if(!m.hasMethod('ensureMemory')) return {pass:false, detail:'no ensureMemory'}; var before = m.invoke('hasWasmMemory'); try{ m.invoke('ensureMemory'); }catch(e){ return {pass:false, detail:'ensureMemory threw: '+e.message}; } var after = m.invoke('hasWasmMemory'); return {pass:after === true, detail:'boot calls ensureMemory (FIX 11): before='+before+', after='+after}; },
   371: function(k){ var errs = k.getErrors(); var realFatals = 0; for(var i=0;i<errs.length;i++){ if(errs[i].severity === 'FATAL' && errs[i].partition !== 'TEST' && errs[i].partition !== 'T' && errs[i].partition !== 'RING_TEST'){ realFatals++; } } return {pass:true, detail:'audit cleanup preserves real FATals (FIX 7): count='+realFatals}; },
-  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.3.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
+  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.4.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
   373: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=[]; var count=0; sch.invoke("add", function(){ count++; if(count<3){ sch.invoke("add", function(){ ran.push("child"); }, "HIGH"); } ran.push("parent"); }, "NORMAL"); sch.invoke("tick", 100); sch.invoke("clearAll"); return {pass: count === 1, detail:"Scheduler reentrancy guarded (FIX 1+2): parent ran "+count+" time(s)"}; },
   374: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=0; sch.invoke("add", function(){ ran++; }, "NORMAL"); sch.invoke("tick", 0); sch.invoke("clearAll"); return {pass:ran===0, detail:"budget=0 runs 0 tasks (FIX 3): ran="+ran}; },
   375: function(k){ var c4=k.getPartitionRaw("C3.4"); if(!c4.hasMethod("instantiate")) return {pass:false, detail:"no instantiate"}; return {pass:true, detail:"C3.4 uses inst.exports.memory (FIX 4)"}; },
@@ -8899,7 +8953,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   381: function(k){ var el = window.document.querySelector('meta[http-equiv="Content-Security-Policy"]'); if(!el) return {pass:false, detail:"no CSP meta"}; var csp = el.content; var hasUE = /'unsafe-eval'/.test(csp); var hasWUE = /'wasm-unsafe-eval'/.test(csp); return {pass:!hasUE, detail:'CSP: unsafe-eval='+hasUE+' wasm-unsafe-eval='+hasWUE+' (v4.1.0)'}; },
   382: function(k){ var c2=k.getPartitionRaw("C3.2"); if(!c2.hasMethod("alloc")) return {pass:false, detail:"no alloc"}; if(!c2.hasMethod("allocBlock")) return {pass:false, detail:"no allocBlock"}; if(!c2.hasMethod("freeBlock")) return {pass:false, detail:"no freeBlock"}; return {pass:true, detail:"C3.2 alloc/allocBlock/freeBlock present (deepdive v2.0.6)"}; },
   383: function(k){ var ev=k.getPartitionRaw("C3.5"); if(!ev.hasMethod("getLastMods")) return {pass:false, detail:"no getLastMods"}; return {pass:true, detail:"C3.5 getLastMods present; reset on blur (FIX 22)"}; },
-  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-8.3.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v7.9.0 remote daemon (730 tests)"}; },
+  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-8.4.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v7.9.0 remote daemon (730 tests)"}; },
   385: function(k){ if(!k.linker || typeof k.linker.assertCap !== 'function') return {pass:false, detail:'no Linker'}; try{ k.linker.assertCap('C3.15','C3.12'); }catch(e){ return {pass:false, detail:'allowed cap threw: '+e.message}; } return {pass:true, detail:'Linker allows C3.15 -> C3.12 (#1)'}; },
   386: function(k){ if(!k.linker) return {pass:false, detail:'no Linker'}; var threw=false; try{ k.linker.assertCap('C3.15','C3.4'); }catch(e){ threw=true; if(e.message.indexOf('LINKER_CAP_DENIED')<0) return {pass:false, detail:'wrong error: '+e.message}; } return {pass:threw, detail:'Linker denies C3.15 -> C3.4 (#1)'}; },
   387: function(k){ if(typeof __ZEPHYR_AUDIT === 'undefined') return {pass:false, detail:'no __ZEPHYR_AUDIT flag'}; return {pass:__ZEPHYR_AUDIT===true, detail:'__ZEPHYR_AUDIT='+__ZEPHYR_AUDIT+' (#14)'}; },
@@ -8915,7 +8969,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   397: function(k){ if(typeof Apps.launchWorkerApp !== 'function') return {pass:false, detail:'no launchWorkerApp'}; return {pass:true, detail:'Apps.launchWorkerApp present (#18)'}; },
   398: function(k){ if(typeof showManifestConsent !== 'function') return {pass:false, detail:'no showManifestConsent'}; return {pass:true, detail:'Consent dialog present (#19)'}; },
   399: function(k){ var ds=k.getPartitionRaw('C3.15'); if(!ds.hasMethod('isGLCompositor')) return {pass:false, detail:'no isGLCompositor'}; var gl=ds.invoke('isGLCompositor'); return {pass:typeof gl === 'boolean', detail:'GL compositor: '+gl+' (#20)'}; },
-  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.3.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
+  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.4.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
   401: function(k){ if(!k.hw) return {pass:false, detail:'no HardwareBridge'}; if(typeof k.hw.isSAB !== 'function') return {pass:false, detail:'no isSAB'}; return {pass:true, detail:'HardwareBridge present; SAB='+k.hw.isSAB()+' (#1)'}; },
   402: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; k.hw.setMouseState(100, 200, 1); var s=k.hw.getMouseState(); return {pass:s.x===100&&s.y===200&&s.buttons===1, detail:'event coalescer: x='+s.x+' y='+s.y+' btn='+s.buttons+' (#18)'}; },
   403: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; var t=k.hw.getTimeOrigin(); return {pass:typeof t==='number'&&t>0, detail:'timeOrigin='+t+' (#13)'}; },
@@ -8935,7 +8989,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   417: function(k){ if(!k.wakeLock) return {pass:false, detail:'no wakeLock'}; return {pass:typeof k.wakeLock.request==='function', detail:'WakeLock present (#8)'}; },
   418: function(k){ if(!k.opfs) return {pass:false, detail:'no opfs'}; if(!k.transport) return {pass:false, detail:'no transport'}; if(!k.audio) return {pass:false, detail:'no audio'}; if(!k.simd) return {pass:false, detail:'no simd'}; return {pass:true, detail:'OPFS+WebTransport+Audio+SIMD present (#9+#10+#12+#16)'}; },
   419: function(k){ if(!k.boundary) return {pass:false, detail:'no boundary'}; if(!k.staticLinker) return {pass:false, detail:'no staticLinker'}; if(!k.gcFree) return {pass:false, detail:'no gcFree'}; return {pass:true, detail:'Boundary+StaticLinker+GCFree present (#2+#14+#15)'}; },
-  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.3.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
+  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.4.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
   421: function(k){ if(!k.wat) return {pass:false, detail:'no WATCompiler'}; if(typeof k.wat.compile !== 'function') return {pass:false, detail:'no compile'}; return {pass:true, detail:'WATCompiler present (wabt.js integration)'}; },
   422: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; return k.wat.init().then(function(ok){ return {pass:ok, detail:'wabt.js loaded: '+ok}; }).catch(function(e){ return {pass:false, detail:'init failed: '+e.message}; }); },
   423: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; var wat = '(module (func (export \"add\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))'; return k.wat.compile(wat).then(function(bytes){ if(!(bytes instanceof Uint8Array) || bytes.length < 8) return {pass:false, detail:'bytes invalid'}; return {pass:true, detail:'WAT compiled: '+bytes.length+' bytes'}; }).catch(function(e){ return {pass:false, detail:'compile failed: '+e.message}; }); },
@@ -9045,7 +9099,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   527: function(k){ var state_size = 32; var four_balances = 4 * 8; return {pass: state_size === four_balances, detail:'State buffer is 32 bytes (4 x i64 balances) (#5 Layer 2)'}; },
   528: function(k){ var rpc_nonce = 1; rpc_nonce = rpc_nonce + 1; return {pass: rpc_nonce === 2, detail:'RPC nonce increments after each use (#18)'}; },
   529: function(k){ var scrub_order = ['decrypt', 'parse', 'encrypt_state', 'commit', 'scrub_ephemeral', 'scrub_ingress']; var correct = scrub_order[4] === 'scrub_ephemeral' && scrub_order[5] === 'scrub_ingress'; return {pass: correct, detail:'Scrub order: ephemeral then ingress after commit (#10 #13)'}; },
-  530: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.3.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.3.0 triple-hardened wallet + 100 security tests (530 total)'}; },
+  530: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.4.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.3.0 triple-hardened wallet + 100 security tests (530 total)'}; },
   531: function(k){ var s='9223372036854775807'; var v=parseFloat(s); return {pass: v === 9223372036854776000, detail:'Max i64 string parsed without crash (#1)'}; },
   532: function(k){ var s='-1000000000000'; var v=parseFloat(s); return {pass: v < 0, detail:'Negative atomic detected (#2)'}; },
   533: function(k){ var s='1000000000000.5'; var v=parseFloat(s); var hasDecimal = s.indexOf('.') >= 0; return {pass: hasDecimal, detail:'Floating-point atomic detected at decimal (#3)'}; },
@@ -9145,7 +9199,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   627: function(k){ var mem = new Uint8Array(2097152); mem[0] = 0xFF; mem[65536] = 0xAA; mem[131072] = 0xBB; mem.fill(0); return {pass: mem[0]===0 && mem[65536]===0 && mem[131072]===0, detail:'Full 2MB memory zeroized post-panic (#97)'}; },
   628: function(k){ var instanceAlive = false; try { throw new Error('unreachable'); } catch(e) { instanceAlive = false; } return {pass: !instanceAlive, detail:'Instance terminated after unreachable (#98)'}; },
   629: function(k){ var stateLocked = true; try { throw new Error('trap'); } catch(e) { stateLocked = true; } return {pass: stateLocked, detail:'JS cannot re-init after catch (state locked) (#99)'}; },
-  630: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.3.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.4.0 200 total security tests (630 total)'}; },
+  630: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.4.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.4.0 200 total security tests (630 total)'}; },
   631: function(k){ var enableMultisig = false; var allowed = enableMultisig; return {pass: !allowed, detail:'Multisig experimental flag bypass blocked (#1)'}; },
   632: function(k){ var hexLen = 65; var maxKeyImage = 64; return {pass: hexLen > maxKeyImage, detail:'65-byte key image hex overflow detected (#2)'}; },
   633: function(k){ var racePrevented = true; return {pass: racePrevented, detail:'Key image freeze/thaw race prevented by atomic lock (#3)'}; },
@@ -15345,22 +15399,24 @@ var Toast = (function(){
 
 
 document.addEventListener('keydown', function(e){
+  // v8.4.0: In wallet-only mode we still allow Task Manager and System
+  // Monitor (diagnostic tools), but suppress all desktop-shell shortcuts
+  // (StartMenu, HomeScreen, Alt-Tab switcher) since those UI elements
+  // are hidden by the body.wallet-only CSS.
   if(e.ctrlKey && e.shiftKey && e.key === 'Escape'){ e.preventDefault(); Apps.taskManager(); return; }
   if(e.ctrlKey && e.shiftKey && (e.key === 'M' || e.key === 'm')){ e.preventDefault(); SystemMonitor.toggle(); return; }
-  if(e.key === 'Meta' || (e.key === 'OS')){ e.preventDefault(); StartMenu.toggle(); return; }
-  if(e.key === 'Home' || (e.ctrlKey && e.key === 'h')){ e.preventDefault(); HomeScreen.toggle(); return; }
-  if(e.altKey && e.key === 'Tab'){
-    e.preventDefault();
-    if(!WM.isSwitcherVisible()) WM.showSwitcher();
-    else WM.cycleSwitcher();
-    return;
-  }
+  // Meta/Win key — would normally open StartMenu; suppressed in wallet-only
+  if(e.key === 'Meta' || (e.key === 'OS')){ return; }
+  // Home / Ctrl+H — would normally toggle HomeScreen; suppressed in wallet-only
+  if(e.key === 'Home' || (e.ctrlKey && e.key === 'h')){ return; }
+  // Alt-Tab switcher — no other windows to switch to in wallet-only mode
+  if(e.altKey && e.key === 'Tab'){ e.preventDefault(); return; }
   if(e.key === 'Alt' && WM.isSwitcherVisible()){ WM.hideSwitcher(); return; }
   if(e.key === 'Escape'){
     if(WM.isSwitcherVisible()){ WM.hideSwitcher(); return; }
-    StartMenu.close();
-    ContextMenu.close();
-    QuickSettings.close();
+    try{ StartMenu.close(); }catch(e){}
+    try{ ContextMenu.close(); }catch(e){}
+    try{ QuickSettings.close(); }catch(e){}
     return;
   }
 });
@@ -15385,11 +15441,21 @@ window.addEventListener('resize', function(){
 
 
 function boot(){
+  // ====================================================================
+  // v8.4.0 — WALLET-ONLY BOOT
+  // ====================================================================
+  // The desktop shell (Taskbar, StartMenu, HomeScreen, Desktop icons) is
+  // kept mounted for compatibility with the test suite, but is hidden via
+  // the `body.wallet-only` CSS class (set on <body>). After Kernel.boot()
+  // completes we still call Desktop.rebuild()/StartMenu.rebuild() (some
+  // kernel tests probe them) but then launch Apps.zephyrWallet() directly.
+  // The wallet window is forced to full-screen by the wallet-only CSS.
+  // ====================================================================
   document.querySelectorAll('.tb-app[data-app]').forEach(function(btn){
     btn.addEventListener('click', function(){
       var app = btn.getAttribute('data-app');
-      if(app === 'home') HomeScreen.toggle();
-      else if(app === 'taskmanager') Apps.taskManager();
+      // In wallet-only mode the taskbar is hidden; bindings kept for debug.
+      if(app === 'taskmanager') Apps.taskManager();
       else if(app === 'terminal') Apps.terminal();
       else if(app === 'fileexplorer') Apps.fileExplorer();
       else if(app === 'appstore') Apps.appStore();
@@ -15401,7 +15467,16 @@ function boot(){
   });
   var fill = document.getElementById('boot-bar-fill');
   var tip = document.getElementById('boot-tip');
-  var tips = ['Initializing kernel partitions...','Sealing Circle 1 boot record...','Deep-freezing Circle 2 utils...','Building 25 C3 partitions...','Freezing dispatch table...','Locking partition exports...','Starting render loop...','Mounting desktop...'];
+  var tips = [
+    'Initializing kernel partitions...',
+    'Sealing Circle 1 boot record...',
+    'Deep-freezing Circle 2 utils...',
+    'Building 25 C3 partitions...',
+    'Compiling WASM RPC modules...',
+    'Locking partition exports...',
+    'Starting render loop...',
+    'Launching Zephyr Wallet...'
+  ];
   var tipIdx = 0;
   var pct = 0;
   var bootInterval = setInterval(function(){
@@ -15415,8 +15490,20 @@ function boot(){
     if(pct >= 100){
       clearInterval(bootInterval);
       Kernel.boot();
-      Desktop.rebuild();
-      StartMenu.rebuild();
+      // Rebuild desktop/start-menu for test-suite compatibility (they remain
+      // hidden via CSS in wallet-only mode).
+      try{ if(typeof Desktop !== 'undefined') Desktop.rebuild(); }catch(e){}
+      try{ if(typeof StartMenu !== 'undefined') StartMenu.rebuild(); }catch(e){}
+      // v8.4.0: Launch Zephyr Wallet as the sole full-screen window.
+      try{
+        Apps.zephyrWallet();
+        // Belt-and-suspenders: toggle-maximize the wallet window (the
+        // body.wallet-only CSS already forces it to 100vw x 100vh, but
+        // toggling the maximized class helps the WM track state correctly).
+        try{ WM.toggleMax('zephyr-wallet'); }catch(e){}
+      }catch(e){
+        console.error('[v8.4.0] Failed to launch Zephyr Wallet:', e);
+      }
       setTimeout(function(){
         document.getElementById('boot').classList.add('hidden');
         setTimeout(function(){ document.getElementById('boot').style.display = 'none'; }, 600);
@@ -17656,22 +17743,24 @@ var Toast = (function(){
 
 
 document.addEventListener('keydown', function(e){
+  // v8.4.0: In wallet-only mode we still allow Task Manager and System
+  // Monitor (diagnostic tools), but suppress all desktop-shell shortcuts
+  // (StartMenu, HomeScreen, Alt-Tab switcher) since those UI elements
+  // are hidden by the body.wallet-only CSS.
   if(e.ctrlKey && e.shiftKey && e.key === 'Escape'){ e.preventDefault(); Apps.taskManager(); return; }
   if(e.ctrlKey && e.shiftKey && (e.key === 'M' || e.key === 'm')){ e.preventDefault(); SystemMonitor.toggle(); return; }
-  if(e.key === 'Meta' || (e.key === 'OS')){ e.preventDefault(); StartMenu.toggle(); return; }
-  if(e.key === 'Home' || (e.ctrlKey && e.key === 'h')){ e.preventDefault(); HomeScreen.toggle(); return; }
-  if(e.altKey && e.key === 'Tab'){
-    e.preventDefault();
-    if(!WM.isSwitcherVisible()) WM.showSwitcher();
-    else WM.cycleSwitcher();
-    return;
-  }
+  // Meta/Win key — would normally open StartMenu; suppressed in wallet-only
+  if(e.key === 'Meta' || (e.key === 'OS')){ return; }
+  // Home / Ctrl+H — would normally toggle HomeScreen; suppressed in wallet-only
+  if(e.key === 'Home' || (e.ctrlKey && e.key === 'h')){ return; }
+  // Alt-Tab switcher — no other windows to switch to in wallet-only mode
+  if(e.altKey && e.key === 'Tab'){ e.preventDefault(); return; }
   if(e.key === 'Alt' && WM.isSwitcherVisible()){ WM.hideSwitcher(); return; }
   if(e.key === 'Escape'){
     if(WM.isSwitcherVisible()){ WM.hideSwitcher(); return; }
-    StartMenu.close();
-    ContextMenu.close();
-    QuickSettings.close();
+    try{ StartMenu.close(); }catch(e){}
+    try{ ContextMenu.close(); }catch(e){}
+    try{ QuickSettings.close(); }catch(e){}
     return;
   }
 });
@@ -17696,11 +17785,21 @@ window.addEventListener('resize', function(){
 
 
 function boot(){
+  // ====================================================================
+  // v8.4.0 — WALLET-ONLY BOOT
+  // ====================================================================
+  // The desktop shell (Taskbar, StartMenu, HomeScreen, Desktop icons) is
+  // kept mounted for compatibility with the test suite, but is hidden via
+  // the `body.wallet-only` CSS class (set on <body>). After Kernel.boot()
+  // completes we still call Desktop.rebuild()/StartMenu.rebuild() (some
+  // kernel tests probe them) but then launch Apps.zephyrWallet() directly.
+  // The wallet window is forced to full-screen by the wallet-only CSS.
+  // ====================================================================
   document.querySelectorAll('.tb-app[data-app]').forEach(function(btn){
     btn.addEventListener('click', function(){
       var app = btn.getAttribute('data-app');
-      if(app === 'home') HomeScreen.toggle();
-      else if(app === 'taskmanager') Apps.taskManager();
+      // In wallet-only mode the taskbar is hidden; bindings kept for debug.
+      if(app === 'taskmanager') Apps.taskManager();
       else if(app === 'terminal') Apps.terminal();
       else if(app === 'fileexplorer') Apps.fileExplorer();
       else if(app === 'appstore') Apps.appStore();
@@ -17712,7 +17811,16 @@ function boot(){
   });
   var fill = document.getElementById('boot-bar-fill');
   var tip = document.getElementById('boot-tip');
-  var tips = ['Initializing kernel partitions...','Sealing Circle 1 boot record...','Deep-freezing Circle 2 utils...','Building 25 C3 partitions...','Freezing dispatch table...','Locking partition exports...','Starting render loop...','Mounting desktop...'];
+  var tips = [
+    'Initializing kernel partitions...',
+    'Sealing Circle 1 boot record...',
+    'Deep-freezing Circle 2 utils...',
+    'Building 25 C3 partitions...',
+    'Compiling WASM RPC modules...',
+    'Locking partition exports...',
+    'Starting render loop...',
+    'Launching Zephyr Wallet...'
+  ];
   var tipIdx = 0;
   var pct = 0;
   var bootInterval = setInterval(function(){
@@ -17726,8 +17834,20 @@ function boot(){
     if(pct >= 100){
       clearInterval(bootInterval);
       Kernel.boot();
-      Desktop.rebuild();
-      StartMenu.rebuild();
+      // Rebuild desktop/start-menu for test-suite compatibility (they remain
+      // hidden via CSS in wallet-only mode).
+      try{ if(typeof Desktop !== 'undefined') Desktop.rebuild(); }catch(e){}
+      try{ if(typeof StartMenu !== 'undefined') StartMenu.rebuild(); }catch(e){}
+      // v8.4.0: Launch Zephyr Wallet as the sole full-screen window.
+      try{
+        Apps.zephyrWallet();
+        // Belt-and-suspenders: toggle-maximize the wallet window (the
+        // body.wallet-only CSS already forces it to 100vw x 100vh, but
+        // toggling the maximized class helps the WM track state correctly).
+        try{ WM.toggleMax('zephyr-wallet'); }catch(e){}
+      }catch(e){
+        console.error('[v8.4.0] Failed to launch Zephyr Wallet:', e);
+      }
       setTimeout(function(){
         document.getElementById('boot').classList.add('hidden');
         setTimeout(function(){ document.getElementById('boot').style.display = 'none'; }, 600);
