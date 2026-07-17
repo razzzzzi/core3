@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src blob:; img-src 'self' data: blob:; style-src 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net https://zephyrprotocol.com https://corsproxy.io https://api.allorigins.win http://remote-node.zephyrprotocol.com http://nodes.hashvault.pro">
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.39/index.js" id="wabt-loader" async></script>
-<title>Zephyr OS v8.1.0</title>
+<title>Zephyr OS v8.3.0</title>
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -221,7 +221,7 @@ textarea.tm-input{font-family:'Cascadia Code','Consolas',monospace;resize:vertic
 
 <div id="boot">
   <div class="boot-logo">Zephyr OS</div>
-  <div class="boot-version">v8.1.0 — Remote daemon support (SoA + view cache + double buffering) (writePixel batching + cached views)</div>
+  <div class="boot-version">v8.3.0 — Targeted JSON Extractor (WASM-native send_raw_transaction response parser)</div>
   <div class="boot-spinner"></div>
   <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
   <div class="boot-tip" id="boot-tip">Initializing kernel partitions...</div>
@@ -1446,7 +1446,7 @@ function hasPermission(manifest, perm){
 var C1 = (function(){
   var bootTime = performance.now();
   var state = {
-    version: 'Zephyr-OS-8.1.0',
+    version: 'Zephyr-OS-8.3.0',
     bootTime: bootTime,
     canvasId: 'wallpaper-canvas',
     memoryBase: 65536,
@@ -3182,6 +3182,7 @@ var Kernel = (function(){
     try{ WakeLock.request(); }catch(e){}
     try{ ZephyrDaemonWasm.compile().catch(function(e){}); }catch(e){}
     try{ ZephyrRpcWasm.compile().catch(function(e){}); }catch(e){}
+    try{ ZephyrParserWasm.compile().catch(function(e){}); }catch(e){}
     C1.seal();
     Dispatch.freeze();
     var ids = Array.from(partitions.keys());
@@ -3340,6 +3341,7 @@ var Kernel = (function(){
     hypervisor: HypervisorV2,
     daemonWasm: ZephyrDaemonWasm,
     rpcWasm: ZephyrRpcWasm,
+    parserWasm: ZephyrParserWasm,
     wat: WATCompiler,
     clipboard: GhostClipboard,
     blackbox: BlackBox,
@@ -3935,7 +3937,7 @@ var AUDIT_FIXES = (__ZEPHYR_AUDIT) ? [
   {id:527, title:'State buffer 32 bytes (#5)', severity:'medium', where:'state', evidence:'4x8=32'},
   {id:528, title:'RPC nonce increments (#18)', severity:'high', where:'nonce', evidence:'1->2'},
   {id:529, title:'Scrub order correct (#10 #13)', severity:'critical', where:'scrub', evidence:'ephemeral then ingress'},
-  {id:530, title:'v7.3.0 100 security tests (530 total)', severity:'low', where:'version', evidence:'Zephyr-OS-8.1.0'},
+  {id:530, title:'v7.3.0 100 security tests (530 total)', severity:'low', where:'version', evidence:'Zephyr-OS-8.2.0'},
   {id:531, title:'Max i64 atomic parse (#1)', severity:'critical', where:'parser', evidence:'9223372036854775807'},
   {id:532, title:'Negative atomic rejection (#2)', severity:'critical', where:'parser', evidence:'negative detected'},
   {id:533, title:'Float atomic rejection (#3)', severity:'high', where:'parser', evidence:'decimal detected'},
@@ -4035,7 +4037,7 @@ var AUDIT_FIXES = (__ZEPHYR_AUDIT) ? [
   {id:627, title:'Full 2MB zeroized (#97)', severity:'critical', where:'panic', evidence:'all 0x00'},
   {id:628, title:'Instance terminated post-panic (#98)', severity:'critical', where:'panic', evidence:'RuntimeError'},
   {id:629, title:'State locked after catch (#99)', severity:'critical', where:'panic', evidence:'locked'},
-  {id:630, title:'v7.4.0 200 total security tests (630 total)', severity:'low', where:'version', evidence:'Zephyr-OS-8.1.0'},
+  {id:630, title:'v7.4.0 200 total security tests (630 total)', severity:'low', where:'version', evidence:'Zephyr-OS-8.2.0'},
   {id:631, title:'Multisig experimental bypass (#1)', severity:'critical', where:'multisig', evidence:'denied'},
   {id:632, title:'Key image hex overflow (#2)', severity:'critical', where:'keyimage', evidence:'65>64 bytes'},
   {id:633, title:'Key image race condition (#3)', severity:'critical', where:'keyimage', evidence:'atomic lock'},
@@ -4135,7 +4137,12 @@ var AUDIT_FIXES = (__ZEPHYR_AUDIT) ? [
   {id:727, title:'Account index isolation (#97)', severity:'critical', where:'account', evidence:'isolated'},
   {id:728, title:'Subaddress minor wrap (#98)', severity:'high', where:'subaddr', evidence:'rejected'},
   {id:729, title:'Address book invalid integrated (#99)', severity:'high', where:'addressbook', evidence:'rejected'},
-  {id:730, title:'Full 2MB scrub on close (#100)', severity:'critical', where:'memory', evidence:'all 0x00'}
+  {id:730, title:'Full 2MB scrub on close (#100)', severity:'critical', where:'memory', evidence:'all 0x00'},
+  {id:731, title:'v8.3.0 ZephyrParserWasm compiles (targeted JSON extractor)', severity:'critical', where:'zephyrParserWasm', evidence:'WabtModule().parseWat succeeds; exports process_response+get_status_ptr+get_status_len+get_is_double_spend+reset_state'},
+  {id:732, title:'v8.3.0 Parser extracts status="OK" + double_spend_seen=false', severity:'high', where:'zephyrParserWasm', evidence:'process_response returns 1; status_ptr/len point to "OK"; get_is_double_spend returns 0'},
+  {id:733, title:'v8.3.0 Parser extracts status="Failed" + double_spend_seen=true', severity:'high', where:'zephyrParserWasm', evidence:'process_response returns 1; status string = "Failed"; get_is_double_spend returns 1'},
+  {id:734, title:'v8.3.0 Parser handles missing status key (returns 0)', severity:'high', where:'zephyrParserWasm', evidence:'process_response returns 0; get_is_double_spend returns -1 (missing)'},
+  {id:735, title:'v8.3.0 Parser handles missing double_spend_seen key (tri-state -1)', severity:'medium', where:'zephyrParserWasm', evidence:'process_response returns 1 (status found); get_is_double_spend returns -1 (key absent)'}
 ] : [];
 var checks = (__ZEPHYR_AUDIT) ? {
   1: function(k){
@@ -8880,7 +8887,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   369: function(k){ var pm = k.getPartitionRaw('C3.6'); var t = 'C3.94.'+Date.now(); pm.invoke('create', t, 'C3.1'); var p = k.getPartitionRaw(t); if(!p) return {pass:false, detail:'create failed'}; p.export('noop', function(){return 1;}); var before = p.exportCount; pm.invoke('destroy', t); try{ var after = p.exportCount; }catch(e){ var after = -1; } return {pass:before === 1, detail:'WM cleanup destroys partition exports (FIX 10): before='+before+', after='+after}; },
   370: function(k){ var m = k.getPartitionRaw('C3.2'); if(!m.hasMethod('ensureMemory')) return {pass:false, detail:'no ensureMemory'}; var before = m.invoke('hasWasmMemory'); try{ m.invoke('ensureMemory'); }catch(e){ return {pass:false, detail:'ensureMemory threw: '+e.message}; } var after = m.invoke('hasWasmMemory'); return {pass:after === true, detail:'boot calls ensureMemory (FIX 11): before='+before+', after='+after}; },
   371: function(k){ var errs = k.getErrors(); var realFatals = 0; for(var i=0;i<errs.length;i++){ if(errs[i].severity === 'FATAL' && errs[i].partition !== 'TEST' && errs[i].partition !== 'T' && errs[i].partition !== 'RING_TEST'){ realFatals++; } } return {pass:true, detail:'audit cleanup preserves real FATals (FIX 7): count='+realFatals}; },
-  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.1.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
+  372: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.2.0') return {pass:false, detail:'version='+ (k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
   373: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=[]; var count=0; sch.invoke("add", function(){ count++; if(count<3){ sch.invoke("add", function(){ ran.push("child"); }, "HIGH"); } ran.push("parent"); }, "NORMAL"); sch.invoke("tick", 100); sch.invoke("clearAll"); return {pass: count === 1, detail:"Scheduler reentrancy guarded (FIX 1+2): parent ran "+count+" time(s)"}; },
   374: function(k){ var sch=k.getPartitionRaw("C3.11"); sch.invoke("clearAll"); var ran=0; sch.invoke("add", function(){ ran++; }, "NORMAL"); sch.invoke("tick", 0); sch.invoke("clearAll"); return {pass:ran===0, detail:"budget=0 runs 0 tasks (FIX 3): ran="+ran}; },
   375: function(k){ var c4=k.getPartitionRaw("C3.4"); if(!c4.hasMethod("instantiate")) return {pass:false, detail:"no instantiate"}; return {pass:true, detail:"C3.4 uses inst.exports.memory (FIX 4)"}; },
@@ -8892,7 +8899,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   381: function(k){ var el = window.document.querySelector('meta[http-equiv="Content-Security-Policy"]'); if(!el) return {pass:false, detail:"no CSP meta"}; var csp = el.content; var hasUE = /'unsafe-eval'/.test(csp); var hasWUE = /'wasm-unsafe-eval'/.test(csp); return {pass:!hasUE, detail:'CSP: unsafe-eval='+hasUE+' wasm-unsafe-eval='+hasWUE+' (v4.1.0)'}; },
   382: function(k){ var c2=k.getPartitionRaw("C3.2"); if(!c2.hasMethod("alloc")) return {pass:false, detail:"no alloc"}; if(!c2.hasMethod("allocBlock")) return {pass:false, detail:"no allocBlock"}; if(!c2.hasMethod("freeBlock")) return {pass:false, detail:"no freeBlock"}; return {pass:true, detail:"C3.2 alloc/allocBlock/freeBlock present (deepdive v2.0.6)"}; },
   383: function(k){ var ev=k.getPartitionRaw("C3.5"); if(!ev.hasMethod("getLastMods")) return {pass:false, detail:"no getLastMods"}; return {pass:true, detail:"C3.5 getLastMods present; reset on blur (FIX 22)"}; },
-  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-8.1.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v7.9.0 remote daemon (730 tests)"}; },
+  384: function(k){ if(!k.app || k.app.version !== "Zephyr-OS-8.2.0") return {pass:false, detail:"version="+(k.app&&k.app.version)}; return {pass:true, detail:"v7.9.0 remote daemon (730 tests)"}; },
   385: function(k){ if(!k.linker || typeof k.linker.assertCap !== 'function') return {pass:false, detail:'no Linker'}; try{ k.linker.assertCap('C3.15','C3.12'); }catch(e){ return {pass:false, detail:'allowed cap threw: '+e.message}; } return {pass:true, detail:'Linker allows C3.15 -> C3.12 (#1)'}; },
   386: function(k){ if(!k.linker) return {pass:false, detail:'no Linker'}; var threw=false; try{ k.linker.assertCap('C3.15','C3.4'); }catch(e){ threw=true; if(e.message.indexOf('LINKER_CAP_DENIED')<0) return {pass:false, detail:'wrong error: '+e.message}; } return {pass:threw, detail:'Linker denies C3.15 -> C3.4 (#1)'}; },
   387: function(k){ if(typeof __ZEPHYR_AUDIT === 'undefined') return {pass:false, detail:'no __ZEPHYR_AUDIT flag'}; return {pass:__ZEPHYR_AUDIT===true, detail:'__ZEPHYR_AUDIT='+__ZEPHYR_AUDIT+' (#14)'}; },
@@ -8908,7 +8915,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   397: function(k){ if(typeof Apps.launchWorkerApp !== 'function') return {pass:false, detail:'no launchWorkerApp'}; return {pass:true, detail:'Apps.launchWorkerApp present (#18)'}; },
   398: function(k){ if(typeof showManifestConsent !== 'function') return {pass:false, detail:'no showManifestConsent'}; return {pass:true, detail:'Consent dialog present (#19)'}; },
   399: function(k){ var ds=k.getPartitionRaw('C3.15'); if(!ds.hasMethod('isGLCompositor')) return {pass:false, detail:'no isGLCompositor'}; var gl=ds.invoke('isGLCompositor'); return {pass:typeof gl === 'boolean', detail:'GL compositor: '+gl+' (#20)'}; },
-  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.1.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
+  400: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.2.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
   401: function(k){ if(!k.hw) return {pass:false, detail:'no HardwareBridge'}; if(typeof k.hw.isSAB !== 'function') return {pass:false, detail:'no isSAB'}; return {pass:true, detail:'HardwareBridge present; SAB='+k.hw.isSAB()+' (#1)'}; },
   402: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; k.hw.setMouseState(100, 200, 1); var s=k.hw.getMouseState(); return {pass:s.x===100&&s.y===200&&s.buttons===1, detail:'event coalescer: x='+s.x+' y='+s.y+' btn='+s.buttons+' (#18)'}; },
   403: function(k){ if(!k.hw) return {pass:false, detail:'no hw'}; var t=k.hw.getTimeOrigin(); return {pass:typeof t==='number'&&t>0, detail:'timeOrigin='+t+' (#13)'}; },
@@ -8928,7 +8935,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   417: function(k){ if(!k.wakeLock) return {pass:false, detail:'no wakeLock'}; return {pass:typeof k.wakeLock.request==='function', detail:'WakeLock present (#8)'}; },
   418: function(k){ if(!k.opfs) return {pass:false, detail:'no opfs'}; if(!k.transport) return {pass:false, detail:'no transport'}; if(!k.audio) return {pass:false, detail:'no audio'}; if(!k.simd) return {pass:false, detail:'no simd'}; return {pass:true, detail:'OPFS+WebTransport+Audio+SIMD present (#9+#10+#12+#16)'}; },
   419: function(k){ if(!k.boundary) return {pass:false, detail:'no boundary'}; if(!k.staticLinker) return {pass:false, detail:'no staticLinker'}; if(!k.gcFree) return {pass:false, detail:'no gcFree'}; return {pass:true, detail:'Boundary+StaticLinker+GCFree present (#2+#14+#15)'}; },
-  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.1.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
+  420: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.2.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.9.0 remote daemon (730 tests)'}; },
   421: function(k){ if(!k.wat) return {pass:false, detail:'no WATCompiler'}; if(typeof k.wat.compile !== 'function') return {pass:false, detail:'no compile'}; return {pass:true, detail:'WATCompiler present (wabt.js integration)'}; },
   422: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; return k.wat.init().then(function(ok){ return {pass:ok, detail:'wabt.js loaded: '+ok}; }).catch(function(e){ return {pass:false, detail:'init failed: '+e.message}; }); },
   423: function(k){ if(!k.wat) return {pass:false, detail:'no wat'}; if(location.protocol === 'file:') return {pass:true, detail:'skipped under file:// (CDN blocked; passes via HTTP)'}; var wat = '(module (func (export \"add\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))'; return k.wat.compile(wat).then(function(bytes){ if(!(bytes instanceof Uint8Array) || bytes.length < 8) return {pass:false, detail:'bytes invalid'}; return {pass:true, detail:'WAT compiled: '+bytes.length+' bytes'}; }).catch(function(e){ return {pass:false, detail:'compile failed: '+e.message}; }); },
@@ -9038,7 +9045,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   527: function(k){ var state_size = 32; var four_balances = 4 * 8; return {pass: state_size === four_balances, detail:'State buffer is 32 bytes (4 x i64 balances) (#5 Layer 2)'}; },
   528: function(k){ var rpc_nonce = 1; rpc_nonce = rpc_nonce + 1; return {pass: rpc_nonce === 2, detail:'RPC nonce increments after each use (#18)'}; },
   529: function(k){ var scrub_order = ['decrypt', 'parse', 'encrypt_state', 'commit', 'scrub_ephemeral', 'scrub_ingress']; var correct = scrub_order[4] === 'scrub_ephemeral' && scrub_order[5] === 'scrub_ingress'; return {pass: correct, detail:'Scrub order: ephemeral then ingress after commit (#10 #13)'}; },
-  530: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.1.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.3.0 triple-hardened wallet + 100 security tests (530 total)'}; },
+  530: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.2.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.3.0 triple-hardened wallet + 100 security tests (530 total)'}; },
   531: function(k){ var s='9223372036854775807'; var v=parseFloat(s); return {pass: v === 9223372036854776000, detail:'Max i64 string parsed without crash (#1)'}; },
   532: function(k){ var s='-1000000000000'; var v=parseFloat(s); return {pass: v < 0, detail:'Negative atomic detected (#2)'}; },
   533: function(k){ var s='1000000000000.5'; var v=parseFloat(s); var hasDecimal = s.indexOf('.') >= 0; return {pass: hasDecimal, detail:'Floating-point atomic detected at decimal (#3)'}; },
@@ -9138,7 +9145,7 @@ var checks = (__ZEPHYR_AUDIT) ? {
   627: function(k){ var mem = new Uint8Array(2097152); mem[0] = 0xFF; mem[65536] = 0xAA; mem[131072] = 0xBB; mem.fill(0); return {pass: mem[0]===0 && mem[65536]===0 && mem[131072]===0, detail:'Full 2MB memory zeroized post-panic (#97)'}; },
   628: function(k){ var instanceAlive = false; try { throw new Error('unreachable'); } catch(e) { instanceAlive = false; } return {pass: !instanceAlive, detail:'Instance terminated after unreachable (#98)'}; },
   629: function(k){ var stateLocked = true; try { throw new Error('trap'); } catch(e) { stateLocked = true; } return {pass: stateLocked, detail:'JS cannot re-init after catch (state locked) (#99)'}; },
-  630: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.1.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.4.0 200 total security tests (630 total)'}; },
+  630: function(k){ if(!k.app || k.app.version !== 'Zephyr-OS-8.2.0') return {pass:false, detail:'version='+(k.app&&k.app.version)}; return {pass:true, detail:'v7.4.0 200 total security tests (630 total)'}; },
   631: function(k){ var enableMultisig = false; var allowed = enableMultisig; return {pass: !allowed, detail:'Multisig experimental flag bypass blocked (#1)'}; },
   632: function(k){ var hexLen = 65; var maxKeyImage = 64; return {pass: hexLen > maxKeyImage, detail:'65-byte key image hex overflow detected (#2)'}; },
   633: function(k){ var racePrevented = true; return {pass: racePrevented, detail:'Key image freeze/thaw race prevented by atomic lock (#3)'}; },
@@ -9238,7 +9245,54 @@ var checks = (__ZEPHYR_AUDIT) ? {
   727: function(k){ var accountIsolated = true; return {pass: accountIsolated, detail:'Account 1 balances do not leak into Account 0 (#97)'}; },
   728: function(k){ var minor = 65536; var maxMinor = 65535; var valid = minor <= maxMinor; return {pass: !valid, detail:'Subaddress minor index 65536 wrap-around rejected (#98)'}; },
   729: function(k){ var addrValid = false; return {pass: !addrValid, detail:'Address book invalid integrated address rejected (#99)'}; },
-  730: function(k){ var mem = new Uint8Array(2097152); mem[0] = 0xFF; mem[65536] = 0xAA; mem[131072] = 0xBB; mem[196608] = 0xCC; mem.fill(0); return {pass: mem[0]===0 && mem[65536]===0 && mem[131072]===0 && mem[196608]===0, detail:'Full 2MB wallet state scrubbed on close (#100)'}; }
+  730: function(k){ var mem = new Uint8Array(2097152); mem[0] = 0xFF; mem[65536] = 0xAA; mem[131072] = 0xBB; mem[196608] = 0xCC; mem.fill(0); return {pass: mem[0]===0 && mem[65536]===0 && mem[131072]===0 && mem[196608]===0, detail:'Full 2MB wallet state scrubbed on close (#100)'}; },
+  // === v8.3.0: ZephyrParserWasm Targeted JSON Extractor (5 tests) ===
+  731: function(k){
+    if(typeof ZephyrParserWasm === 'undefined') return {pass:false, detail:'ZephyrParserWasm not defined'};
+    return ZephyrParserWasm.compile().then(function(inst){
+      var exp = inst.exports;
+      var hasAll = typeof exp.process_response === 'function' &&
+                   typeof exp.get_status_ptr === 'function' &&
+                   typeof exp.get_status_len === 'function' &&
+                   typeof exp.get_is_double_spend === 'function' &&
+                   typeof exp.reset_state === 'function';
+      return {pass: hasAll, detail: hasAll ? 'ZephyrParserWasm compiled; 5 exports present (process_response, get_status_ptr, get_status_len, get_is_double_spend, reset_state)' : 'missing exports: ' + Object.keys(exp).join(',')};
+    }).catch(function(e){ return {pass:false, detail:'compile error: ' + e.message}; });
+  },
+  732: function(k){
+    return ZephyrParserWasm.compile().then(function(){
+      var resp = '{"jsonrpc":"2.0","result":{"status":"OK","double_spend_seen":false,"fee_too_low":false,"not_relayed":false,"untrusted":false},"id":"0"}';
+      var r = ZephyrParserWasm.parseResponse(resp);
+      var pass = r.parseSuccess === true && r.status === 'OK' && r.doubleSpend === 0;
+      return {pass: pass, detail: pass ? 'parseSuccess=true; status="OK"; double_spend_seen=0 (false)' : 'FAIL parseSuccess='+r.parseSuccess+' status='+JSON.stringify(r.status)+' ds='+r.doubleSpend};
+    }).catch(function(e){ return {pass:false, detail:'error: ' + e.message}; });
+  },
+  733: function(k){
+    return ZephyrParserWasm.compile().then(function(){
+      var resp = '{"jsonrpc":"2.0","result":{"status":"Failed","double_spend_seen":true,"fee_too_low":false,"not_relayed":false,"untrusted":false},"id":"0"}';
+      var r = ZephyrParserWasm.parseResponse(resp);
+      var pass = r.parseSuccess === true && r.status === 'Failed' && r.doubleSpend === 1;
+      return {pass: pass, detail: pass ? 'parseSuccess=true; status="Failed"; double_spend_seen=1 (true)' : 'FAIL parseSuccess='+r.parseSuccess+' status='+JSON.stringify(r.status)+' ds='+r.doubleSpend};
+    }).catch(function(e){ return {pass:false, detail:'error: ' + e.message}; });
+  },
+  734: function(k){
+    return ZephyrParserWasm.compile().then(function(){
+      // Malformed JSON-RPC error response — no "status" key at all
+      var resp = '{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":"0"}';
+      var r = ZephyrParserWasm.parseResponse(resp);
+      var pass = r.parseSuccess === false && r.status === null && r.doubleSpend === -1;
+      return {pass: pass, detail: pass ? 'parseSuccess=false (no status key); status=null; double_spend_seen=-1 (missing)' : 'FAIL parseSuccess='+r.parseSuccess+' status='+JSON.stringify(r.status)+' ds='+r.doubleSpend};
+    }).catch(function(e){ return {pass:false, detail:'error: ' + e.message}; });
+  },
+  735: function(k){
+    return ZephyrParserWasm.compile().then(function(){
+      // Response with status but NO double_spend_seen key — tri-state -1 expected
+      var resp = '{"jsonrpc":"2.0","result":{"status":"OK","untrusted":false,"some_other_field":42},"id":"0"}';
+      var r = ZephyrParserWasm.parseResponse(resp);
+      var pass = r.parseSuccess === true && r.status === 'OK' && r.doubleSpend === -1;
+      return {pass: pass, detail: pass ? 'parseSuccess=true; status="OK"; double_spend_seen=-1 (key absent — tri-state preserved)' : 'FAIL parseSuccess='+r.parseSuccess+' status='+JSON.stringify(r.status)+' ds='+r.doubleSpend};
+    }).catch(function(e){ return {pass:false, detail:'error: ' + e.message}; });
+  }
 } : {};
 var runAuditChecks = (__ZEPHYR_AUDIT) ? function(k){
   try{ k.clearErrors(); }catch(e){}
@@ -11708,24 +11762,82 @@ var ZephyrRpcWasm = (function(){
   var instance = null;
   var memory = null;
   var compiled = false;
-  var WAT_SOURCE = `(module
+  var WAT_SOURCE = `;; =====================================================================
+;; ZEPHYR ASYNC RPC CLIENT — WAT Module (User's Design + Full JSON Parser)
+;; =====================================================================
+;; Architecture: Two-Phase Async Bridge (Split-Call Pattern)
+;;
+;; Phase 1: JS calls build_request(method_id, tx_ptr, tx_len)
+;;           → WASM builds JSON in memory, stores ptrs in globals
+;;           → JS reads globals via get_req_* exports
+;;
+;; Phase 2: JS fetches async (outside WASM)
+;;           → JS writes response bytes into WASM memory at resp_ptr
+;;
+;; Phase 3: JS calls process_response(resp_ptr, resp_len)
+;;           → WASM parses JSON natively (find_key + parse_value)
+;;           → JS reads results via get_* exports
+;; =====================================================================
+
+(module
+  ;; 4 pages = 256KB
   (memory (export "memory") 4 4)
 
+  ;; =====================================================================
+  ;; GLOBALS — Async bridge state (JS reads these between phases)
+  ;; =====================================================================
+  (global $req_url_ptr (mut i32) (i32.const 0))
+  (global $req_url_len (mut i32) (i32.const 0))
+  (global $req_body_ptr (mut i32) (i32.const 0))
+  (global $req_body_len (mut i32) (i32.const 0))
+
+  ;; Parsed response state
+  (global $resp_status_ok (mut i32) (i32.const 0))
+  (global $resp_double_spend (mut i32) (i32.const 0))
+  (global $resp_fee_too_low (mut i32) (i32.const 0))
+  (global $resp_not_relayed (mut i32) (i32.const 0))
+  (global $resp_height (mut f64) (f64.const 0))
+  (global $resp_difficulty (mut f64) (f64.const 0))
+  (global $resp_tx_count (mut f64) (f64.const 0))
+  (global $resp_tx_pool (mut f64) (f64.const 0))
+  (global $resp_fee (mut f64) (f64.const 0))
+  (global $resp_synced (mut i32) (i32.const 0))
+
+  ;; =====================================================================
+  ;; DATA SEGMENTS — Static strings
+  ;; =====================================================================
+  ;; URL templates at offset 0-63
   (data (i32.const 0) "http://127.0.0.1:17767/json_rpc")
+
+  ;; JSON-RPC request templates at offset 64-511
   (data (i32.const 64) "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":\\"0\\",\\"method\\":\\"get_info\\"}")
   (data (i32.const 128) "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":\\"0\\",\\"method\\":\\"get_fee_estimate\\",\\"params\\":{\\"grace_blocks\\":10}}")
   (data (i32.const 256) "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":\\"0\\",\\"method\\":\\"send_raw_transaction\\",\\"params\\":{\\"tx_as_hex\\":\\"")
-  (data (i32.const 400) "\\",\\"do_not_relay\\":false}}")
+  (data (i32.const 336) "\\",\\"do_not_relay\\":false}}")
 
-  (global $resp_len (mut i32) (i32.const 0))
+  ;; Search keys at offset 512-1023
+  (data (i32.const 512) "\\"height\\":")
+  (data (i32.const 524) "\\"difficulty\\":")
+  (data (i32.const 540) "\\"tx_count\\":")
+  (data (i32.const 554) "\\"tx_pool_size\\":")
+  (data (i32.const 572) "\\"fee\\":")
+  (data (i32.const 580) "\\"synchronized\\":")
+  (data (i32.const 600) "\\"status\\":\\"OK\\"")
+  (data (i32.const 616) "\\"double_spend_seen\\":")
+  (data (i32.const 640) "\\"fee_too_low\\":")
+  (data (i32.const 656) "\\"not_relayed\\":")
 
+  ;; =====================================================================
+  ;; HELPER: mem_copy(dest, src, len)
+  ;; =====================================================================
   (func $mem_copy (param $dest i32) (param $src i32) (param $len i32)
     (local $i i32)
     (local.set $i (i32.const 0))
     (block $done
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
-        (i32.store8 (i32.add (local.get $dest) (local.get $i))
+        (i32.store8
+          (i32.add (local.get $dest) (local.get $i))
           (i32.load8_u (i32.add (local.get $src) (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)
@@ -11733,6 +11845,9 @@ var ZephyrRpcWasm = (function(){
     )
   )
 
+  ;; =====================================================================
+  ;; HELPER: find_key(buf, len, key, klen) → pos after key, or -1
+  ;; =====================================================================
   (func $find_key (param $buf i32) (param $len i32) (param $key i32) (param $klen i32) (result i32)
     (local $i i32) (local $j i32) (local $match i32)
     (if (i32.lt_s (local.get $len) (local.get $klen)) (then (return (i32.const -1))))
@@ -11760,65 +11875,265 @@ var ZephyrRpcWasm = (function(){
     (i32.const -1)
   )
 
-  (func (export "build_request") (param $method_id i32) (param $tx_ptr i32) (param $tx_len i32) (result i32)
-    (local $dest i32)
+  ;; =====================================================================
+  ;; HELPER: parse_f64(buf, pos, max) → f64
+  ;; Parses a number from raw UTF-8 bytes (integer + fraction)
+  ;; =====================================================================
+  (func $parse_f64 (param $buf i32) (param $pos i32) (param $max i32) (result f64)
+    (local $result f64) (local $sign f64) (local $frac f64)
+    (local $c i32) (local $p i32) (local $has_digit i32)
+    (local.set $p (local.get $pos))
+    (local.set $sign (f64.const 1.0))
+    (local.set $result (f64.const 0.0))
+    (local.set $frac (f64.const 1.0))
+    (local.set $has_digit (i32.const 0))
+
+    ;; Skip whitespace, quotes, colons
+    (block $skip_done
+      (loop $skip
+        (br_if $skip_done (i32.ge_s (local.get $p) (local.get $max)))
+        (local.set $c (i32.load8_u (i32.add (local.get $buf) (local.get $p))))
+        (if (i32.or (i32.or (i32.eq (local.get $c) (i32.const 32))
+                            (i32.eq (local.get $c) (i32.const 34)))
+                    (i32.or (i32.eq (local.get $c) (i32.const 58))
+                            (i32.eq (local.get $c) (i32.const 9))))
+          (then
+            (local.set $p (i32.add (local.get $p) (i32.const 1)))
+            (br $skip)
+          )
+        )
+        (br $skip_done)
+      )
+    )
+
+    ;; Negative sign
+    (if (i32.eq (i32.load8_u (i32.add (local.get $buf) (local.get $p))) (i32.const 45))
+      (then (local.set $sign (f64.const -1.0)) (local.set $p (i32.add (local.get $p) (i32.const 1)))))
+
+    ;; Integer part
+    (block $int_done
+      (loop $int
+        (br_if $int_done (i32.ge_s (local.get $p) (local.get $max)))
+        (local.set $c (i32.load8_u (i32.add (local.get $buf) (local.get $p))))
+        (if (i32.and (i32.ge_s (local.get $c) (i32.const 48)) (i32.le_s (local.get $c) (i32.const 57)))
+          (then
+            (local.set $result (f64.add (f64.mul (local.get $result) (f64.const 10.0))
+                                        (f64.convert_i32_s (i32.sub (local.get $c) (i32.const 48)))))
+            (local.set $has_digit (i32.const 1))
+            (local.set $p (i32.add (local.get $p) (i32.const 1)))
+            (br $int)
+          )
+        )
+        (br $int_done)
+      )
+    )
+
+    ;; Fractional part
+    (if (i32.eq (i32.load8_u (i32.add (local.get $buf) (local.get $p))) (i32.const 46))
+      (then
+        (local.set $p (i32.add (local.get $p) (i32.const 1)))
+        (block $frac_done
+          (loop $frac
+            (br_if $frac_done (i32.ge_s (local.get $p) (local.get $max)))
+            (local.set $c (i32.load8_u (i32.add (local.get $buf) (local.get $p))))
+            (if (i32.and (i32.ge_s (local.get $c) (i32.const 48)) (i32.le_s (local.get $c) (i32.const 57)))
+              (then
+                (local.set $frac (f64.mul (local.get $frac) (f64.const 0.1)))
+                (local.set $result (f64.add (local.get $result)
+                  (f64.mul (f64.convert_i32_s (i32.sub (local.get $c) (i32.const 48))) (local.get $frac))))
+                (local.set $has_digit (i32.const 1))
+                (local.set $p (i32.add (local.get $p) (i32.const 1)))
+                (br $frac)
+              )
+            )
+            (br $frac_done)
+          )
+        )
+      )
+    )
+
+    (if (i32.eqz (local.get $has_digit)) (then (return (f64.const 0.0))))
+    (f64.mul (local.get $sign) (local.get $result))
+  )
+
+  ;; =====================================================================
+  ;; HELPER: parse_bool(buf, pos, max) → i32 (1=true, 0=false)
+  ;; =====================================================================
+  (func $parse_bool (param $buf i32) (param $pos i32) (param $max i32) (result i32)
+    (local $p i32) (local $c i32)
+    (local.set $p (local.get $pos))
+    ;; Skip whitespace/colon
+    (block $skip_done
+      (loop $skip
+        (br_if $skip_done (i32.ge_s (local.get $p) (local.get $max)))
+        (local.set $c (i32.load8_u (i32.add (local.get $buf) (local.get $p))))
+        (if (i32.or (i32.eq (local.get $c) (i32.const 32))
+                    (i32.eq (local.get $c) (i32.const 58)))
+          (then
+            (local.set $p (i32.add (local.get $p) (i32.const 1)))
+            (br $skip)
+          )
+        )
+        (br $skip_done)
+      )
+    )
+    ;; Check for 't' (true) = 116
+    (if (i32.eq (i32.load8_u (i32.add (local.get $buf) (local.get $p))) (i32.const 116))
+      (then (return (i32.const 1))))
+    (return (i32.const 0))
+  )
+
+  ;; =====================================================================
+  ;; PHASE 1: build_request(method_id, tx_ptr, tx_len)
+  ;; Builds JSON-RPC request in memory, stores pointers in globals
+  ;; method_id: 0=get_info, 1=get_fee_estimate, 3=send_raw_transaction
+  ;; =====================================================================
+  (func (export "build_request") (param $method_id i32) (param $tx_ptr i32) (param $tx_len i32)
+    (local $dest i32) (local $json_len i32)
     (local.set $dest (i32.const 1024))
+
+    ;; Set URL globals (all methods use same URL)
+    (global.set $req_url_ptr (i32.const 0))
+    (global.set $req_url_len (i32.const 31))
+
     (if (i32.eq (local.get $method_id) (i32.const 0))
-      (then (call $mem_copy (local.get $dest) (i32.const 64) (i32.const 50)) (global.set $resp_len (i32.const 0)) (return (local.get $dest))))
+      (then
+        (call $mem_copy (local.get $dest) (i32.const 64) (i32.const 50))
+        (global.set $req_body_ptr (local.get $dest))
+        (global.set $req_body_len (i32.const 50))
+        (return)))
+
     (if (i32.eq (local.get $method_id) (i32.const 1))
-      (then (call $mem_copy (local.get $dest) (i32.const 128) (i32.const 85)) (global.set $resp_len (i32.const 0)) (return (local.get $dest))))
+      (then
+        (call $mem_copy (local.get $dest) (i32.const 128) (i32.const 85))
+        (global.set $req_body_ptr (local.get $dest))
+        (global.set $req_body_len (i32.const 85))
+        (return)))
+
     (if (i32.eq (local.get $method_id) (i32.const 3))
       (then
+        ;; Part 1: 80 bytes from offset 256
         (call $mem_copy (local.get $dest) (i32.const 256) (i32.const 80))
         (local.set $dest (i32.add (local.get $dest) (i32.const 80)))
+        ;; TX hex (dynamic)
         (call $mem_copy (local.get $dest) (local.get $tx_ptr) (local.get $tx_len))
         (local.set $dest (i32.add (local.get $dest) (local.get $tx_len)))
-        (call $mem_copy (local.get $dest) (i32.const 400) (i32.const 24))
-        (global.set $resp_len (i32.const 0))
-        (return (i32.const 1024))))
+        ;; Part 2: 24 bytes from offset 336
+        (call $mem_copy (local.get $dest) (i32.const 336) (i32.const 24))
+        (local.set $dest (i32.add (local.get $dest) (i32.const 24)))
+        ;; Calculate total
+        (local.set $json_len (i32.sub (local.get $dest) (i32.const 1024)))
+        (global.set $req_body_ptr (i32.const 1024))
+        (global.set $req_body_len (local.get $json_len))
+        (return)))
+  )
+
+  ;; Global getters for JS
+  (func (export "get_req_url_ptr") (result i32) (global.get $req_url_ptr))
+  (func (export "get_req_url_len") (result i32) (global.get $req_url_len))
+  (func (export "get_req_body_ptr") (result i32) (global.get $req_body_ptr))
+  (func (export "get_req_body_len") (result i32) (global.get $req_body_len))
+
+  ;; =====================================================================
+  ;; PHASE 3: process_response(resp_ptr, resp_len) → i32 (0=success)
+  ;; Parses JSON response natively in WASM
+  ;; =====================================================================
+  (func (export "process_response") (param $resp_ptr i32) (param $resp_len i32) (result i32)
+    (local $pos i32)
+    (local $buf i32) (local $len i32)
+    (local.set $buf (local.get $resp_ptr))
+    (local.set $len (local.get $resp_len))
+
+    (if (i32.eqz (local.get $len)) (then (return (i32.const -1))))
+
+    ;; Reset state
+    (global.set $resp_status_ok (i32.const 0))
+    (global.set $resp_double_spend (i32.const 0))
+    (global.set $resp_fee_too_low (i32.const 0))
+    (global.set $resp_not_relayed (i32.const 0))
+
+    ;; height
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 512) (i32.const 9)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_height (call $parse_f64 (local.get $buf) (local.get $pos) (local.get $len)))))
+
+    ;; difficulty
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 524) (i32.const 13)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_difficulty (call $parse_f64 (local.get $buf) (local.get $pos) (local.get $len)))))
+
+    ;; tx_count
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 540) (i32.const 11)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_tx_count (call $parse_f64 (local.get $buf) (local.get $pos) (local.get $len)))))
+
+    ;; tx_pool_size
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 554) (i32.const 15)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_tx_pool (call $parse_f64 (local.get $buf) (local.get $pos) (local.get $len)))))
+
+    ;; fee
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 572) (i32.const 6)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_fee (call $parse_f64 (local.get $buf) (local.get $pos) (local.get $len)))))
+
+    ;; synchronized (boolean)
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 580) (i32.const 16)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_synced (call $parse_bool (local.get $buf) (local.get $pos) (local.get $len)))))
+
+    ;; status:"OK" check
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 600) (i32.const 12)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_status_ok (i32.const 1))))
+
+    ;; double_spend_seen (boolean)
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 616) (i32.const 21)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_double_spend (call $parse_bool (local.get $buf) (local.get $pos) (local.get $len)))))
+
+    ;; fee_too_low (boolean)
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 640) (i32.const 13)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_fee_too_low (call $parse_bool (local.get $buf) (local.get $pos) (local.get $len)))))
+
+    ;; not_relayed (boolean)
+    (local.set $pos (call $find_key (local.get $buf) (local.get $len) (i32.const 656) (i32.const 13)))
+    (if (i32.ge_s (local.get $pos) (i32.const 0))
+      (then (global.set $resp_not_relayed (call $parse_bool (local.get $buf) (local.get $pos) (local.get $len)))))
+
     (i32.const 0)
   )
 
-  (func (export "get_request_len") (param $method_id i32) (param $tx_len i32) (result i32)
-    (if (i32.eq (local.get 0) (i32.const 0)) (then (return (i32.const 50))))
-    (if (i32.eq (local.get 0) (i32.const 1)) (then (return (i32.const 85))))
-    (if (i32.eq (local.get 0) (i32.const 3)) (then (return (i32.add (i32.const 104) (local.get 1)))))
-    (i32.const 0)
+  ;; =====================================================================
+  ;; RESULT GETTERS — JS reads parsed values
+  ;; =====================================================================
+  (func (export "get_status_ok") (result i32) (global.get $resp_status_ok))
+  (func (export "get_double_spend") (result i32) (global.get $resp_double_spend))
+  (func (export "get_fee_too_low") (result i32) (global.get $resp_fee_too_low))
+  (func (export "get_not_relayed") (result i32) (global.get $resp_not_relayed))
+  (func (export "get_height") (result f64) (global.get $resp_height))
+  (func (export "get_difficulty") (result f64) (global.get $resp_difficulty))
+  (func (export "get_tx_count") (result f64) (global.get $resp_tx_count))
+  (func (export "get_tx_pool") (result f64) (global.get $resp_tx_pool))
+  (func (export "get_fee") (result f64) (global.get $resp_fee))
+  (func (export "get_synced") (result i32) (global.get $resp_synced))
+
+  ;; =====================================================================
+  ;; RESET
+  ;; =====================================================================
+  (func (export "reset_state")
+    (global.set $resp_status_ok (i32.const 0))
+    (global.set $resp_double_spend (i32.const 0))
+    (global.set $resp_fee_too_low (i32.const 0))
+    (global.set $resp_not_relayed (i32.const 0))
+    (global.set $resp_height (f64.const 0))
+    (global.set $resp_difficulty (f64.const 0))
+    (global.set $resp_tx_count (f64.const 0))
+    (global.set $resp_tx_pool (f64.const 0))
+    (global.set $resp_fee (f64.const 0))
+    (global.set $resp_synced (i32.const 0))
   )
-
-  (func (export "write_response") (param $src_ptr i32) (param $len i32) (result i32)
-    (if (i32.gt_u (local.get $len) (i32.const 16384)) (then (return (i32.const -1))))
-    (call $mem_copy (i32.const 10240) (local.get $src_ptr) (local.get $len))
-    (global.set $resp_len (local.get $len))
-    (i32.const 0)
-  )
-
-  (data (i32.const 512) "\\"height\\":")
-  (data (i32.const 524) "\\"difficulty\\":")
-  (data (i32.const 540) "\\"tx_count\\":")
-  (data (i32.const 554) "\\"tx_pool_size\\":")
-  (data (i32.const 572) "\\"fee\\":")
-  (data (i32.const 580) "\\"synchronized\\":")
-  (data (i32.const 600) "\\"status\\":\\"OK\\"")
-
-  (func (export "find_in_response") (param $key_id i32) (result i32)
-    (local $key_ptr i32) (local $key_len i32) (local $pos i32)
-    (local.set $key_ptr (i32.add (i32.const 512) (i32.mul (local.get $key_id) (i32.const 20))))
-    (local.set $key_len (i32.const 12))
-    (if (i32.eq (local.get $key_id) (i32.const 0)) (then (local.set $key_len (i32.const 9))))
-    (if (i32.eq (local.get $key_id) (i32.const 1)) (then (local.set $key_len (i32.const 13))))
-    (if (i32.eq (local.get $key_id) (i32.const 2)) (then (local.set $key_len (i32.const 11))))
-    (if (i32.eq (local.get $key_id) (i32.const 3)) (then (local.set $key_len (i32.const 15))))
-    (if (i32.eq (local.get $key_id) (i32.const 4)) (then (local.set $key_len (i32.const 6))))
-    (if (i32.eq (local.get $key_id) (i32.const 5)) (then (local.set $key_len (i32.const 16))))
-    (local.set $pos (call $find_key (i32.const 10240) (global.get $resp_len) (local.get $key_ptr) (local.get $key_len)))
-    (local.get $pos)
-  )
-
-  (func (export "get_resp_len") (result i32) (global.get $resp_len))
-  (func (export "get_resp_ptr") (result i32) (i32.const 10240))
-  (func (export "reset_state") (global.set $resp_len (i32.const 0)))
-  (func (export "write_tx_hex") (param $ptr i32) (param $len i32) (call $mem_copy (i32.const 28672) (local.get $ptr) (local.get $len)))
 )
 `;
 
@@ -11832,7 +12147,7 @@ var ZephyrRpcWasm = (function(){
       });
     }
     return WabtModule().then(function(wabt){
-      var mod = wabt.parseWat('zephyr_rpc.wat', WAT_SOURCE);
+      var mod = wabt.parseWat('zephyr_rpc_v2.wat', WAT_SOURCE);
       mod.resolveNames();
       mod.validate();
       var bin = mod.toBinary({write_debug_names: false});
@@ -11846,104 +12161,117 @@ var ZephyrRpcWasm = (function(){
     });
   }
 
-  // Phase 1: WASM builds request string → JS reads it
-  function buildRequest(methodId, txHex){
-    if(!instance) return null;
-    var txPtr = 0, txLen = 0;
-    if(txHex){
-      txLen = txHex.length;
-      // Write TX hex into WASM memory at offset 28672 (0x7000)
-      var txBytes = new TextEncoder().encode(txHex);
-      var txView = new Uint8Array(memory.buffer, 28672, txLen);
-      txView.set(txBytes);
-    }
-    var ptr = instance.exports.build_request(methodId, 28672, txLen);
-    var len = instance.exports.get_request_len(methodId, txLen);
-    // Read the request string from WASM memory
+  // Read string from WASM memory
+  function readString(ptr, len){
     var view = new Uint8Array(memory.buffer, ptr, len);
     var str = '';
     for(var i=0; i<len; i++) str += String.fromCharCode(view[i]);
-    return { request: str, ptr: ptr, len: len };
+    return str;
   }
 
-  // Phase 2: JS fetches → writes response bytes into WASM memory
-  function writeResponse(arrayBuf){
-    if(!instance) return -1;
-    var bytes = new Uint8Array(arrayBuf);
-    var len = Math.min(bytes.length, 16384);
-    // Write to WASM memory at offset 0x0500 (1280)
-    var view = new Uint8Array(memory.buffer, 1280, len);
-    view.set(bytes.subarray(0, len));
-    return instance.exports.write_response(1280, len);
+  // Write bytes into WASM memory
+  function writeBytes(ptr, bytes){
+    var view = new Uint8Array(memory.buffer, ptr, bytes.length);
+    view.set(bytes);
   }
 
-  // Phase 3: WASM parses response → JS reads results
-  function parseResponse(){
-    if(!instance) return null;
-    var respLen = instance.exports.get_resp_len();
-    if(respLen === 0) return null;
-    var respPtr = instance.exports.get_resp_ptr();
-    var buf = new Uint8Array(memory.buffer, respPtr, respLen);
-
-    // Use WASM find_key to locate each field, then JS parseFloat to convert
-    function extractField(keyId){
-      var pos = instance.exports.find_in_response(keyId);
-      if(pos < 0) return null;
-      // Skip whitespace/quote/colon
-      while(pos < respLen && (buf[pos] === 32 || buf[pos] === 34 || buf[pos] === 58 || buf[pos] === 9)) pos++;
-      var end = pos;
-      while(end < respLen && buf[end] !== 44 && buf[end] !== 125 && buf[end] !== 32) end++;
-      if(end <= pos) return null;
-      var str = '';
-      for(var i=pos; i<end; i++) str += String.fromCharCode(buf[i]);
-      var val = parseFloat(str);
-      return isFinite(val) ? val : null;
-    }
-
-    function extractBool(keyId){
-      var pos = instance.exports.find_in_response(keyId);
-      if(pos < 0) return null;
-      while(pos < respLen && (buf[pos] === 32 || buf[pos] === 34 || buf[pos] === 58)) pos++;
-      return buf[pos] === 116; // 't' for true
-    }
-
-    function checkStatusOk(){
-      var pos = instance.exports.find_in_response(6);
-      return pos >= 0;
-    }
-
-    return {
-      height: extractField(0),
-      difficulty: extractField(1),
-      txCount: extractField(2),
-      txPool: extractField(3),
-      fee: extractField(4),
-      synced: extractBool(5) === true,
-      statusOk: checkStatusOk()
-    };
-  }
-
-  // Full async RPC call: build → fetch → write → parse
-  function rpcCall(methodId, url, txHex){
+  // ==========================================
+  // ASYNC BRIDGE: sendTxAsync(rawTxHex, daemonUrl)
+  // ==========================================
+  // Phase 1: WASM builds request → JS reads from globals
+  // Phase 2: JS fetches async
+  // Phase 3: JS writes response → WASM parses → JS reads results
+  // ==========================================
+  function rpcCall(methodId, daemonUrl, txHex){
     return compile().then(function(){
-      // Phase 1: build request in WASM
-      var req = buildRequest(methodId, txHex);
-      if(!req) return { status: 'error', message: 'WASM not ready' };
+      // === PHASE 1: WASM builds request ===
+      var txPtr = 0, txLen = 0;
+      if(txHex){
+        txLen = txHex.length;
+        var txBytes = new TextEncoder().encode(txHex);
+        writeBytes(28672, txBytes); // Write TX hex at offset 28672
+        txPtr = 28672;
+      }
 
-      // Phase 2: JS fetches (dumb pipe)
-      var fetchOptions = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: req.request };
-      return fetch(url, fetchOptions)
+      // Call WASM to build the JSON-RPC request
+      instance.exports.build_request(methodId, txPtr, txLen);
+
+      // Read request pointers from WASM globals
+      var urlPtr = instance.exports.get_req_url_ptr();
+      var urlLen = instance.exports.get_req_url_len();
+      var bodyPtr = instance.exports.get_req_body_ptr();
+      var bodyLen = instance.exports.get_req_body_len();
+
+      // Extract URL and body from WASM memory
+      var wasmUrl = readString(urlPtr, urlLen);
+      var body = readString(bodyPtr, bodyLen);
+
+      // Use provided daemon URL if given, otherwise use WASM's default
+      var fetchUrl = daemonUrl || wasmUrl;
+
+      // === PHASE 2: JS async fetch ===
+      var fetchOptions = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: body };
+      return fetch(fetchUrl, fetchOptions)
         .catch(function(e){
-          // CORS proxy fallback
-          return fetch('https://corsproxy.io/?' + encodeURIComponent(url), fetchOptions);
+          // CORS blocked — try corsproxy.io fallback
+          return fetch('https://corsproxy.io/?' + encodeURIComponent(fetchUrl), fetchOptions);
         })
         .then(function(resp){ return resp.arrayBuffer(); })
         .then(function(buf){
-          // Write response into WASM memory
-          writeResponse(buf);
-          // Phase 3: WASM parses natively
-          var parsed = parseResponse();
-          return { status: 'fetched', data: parsed };
+          var respBytes = new Uint8Array(buf);
+          var respLen = Math.min(respBytes.length, 16384);
+          var respPtr = 4096; // Response buffer in WASM memory
+
+          // Safety: check buffer bounds
+          if(respLen > 16384) throw new Error('Response too large for WASM buffer');
+
+          // Write response into WASM linear memory
+          writeBytes(respPtr, respBytes.subarray(0, respLen));
+
+          // === PHASE 3a: ZephyrRpcWasm parses response (numeric fields) ===
+          instance.exports.process_response(respPtr, respLen);
+
+          // Read parsed results from WASM globals
+          var data = {
+            statusOk: instance.exports.get_status_ok() === 1,
+            doubleSpend: instance.exports.get_double_spend() === 1,
+            feeTooLow: instance.exports.get_fee_too_low() === 1,
+            notRelayed: instance.exports.get_not_relayed() === 1,
+            height: instance.exports.get_height(),
+            difficulty: instance.exports.get_difficulty(),
+            txCount: instance.exports.get_tx_count(),
+            txPool: instance.exports.get_tx_pool(),
+            fee: instance.exports.get_fee(),
+            synced: instance.exports.get_synced() === 1,
+            // v8.3.0: rich status string from ZephyrParserWasm (null if not yet compiled)
+            statusStr: null
+          };
+
+          // === PHASE 3b: ZephyrParserWasm extracts literal status string ===
+          // For send_raw_transaction (method_id=3) the JS layer benefits from
+          // the literal daemon status ("OK"/"Failed"/"Busy"/...) rather than
+          // just a boolean. ZephyrParserWasm.parseResponse is synchronous and
+          // self-contained — it writes the response into its OWN memory and
+          // extracts status + double_spend_seen with a state machine.
+          if(methodId === 3){
+            try {
+              var decoder = new TextDecoder();
+              var respText = decoder.decode(respBytes.subarray(0, respLen));
+              return ZephyrParserWasm.compile().then(function(){
+                var parsed = ZephyrParserWasm.parseResponse(respText);
+                data.statusStr = parsed.status;
+                // ZephyrParserWasm.doubleSpend is tri-state (-1=missing).
+                // If it found the key, prefer it over ZephyrRpcWasm's bool.
+                if(parsed.doubleSpend >= 0) data.doubleSpend = parsed.doubleSpend === 1;
+                return { status: 'fetched', data: data };
+              });
+            } catch(e) {
+              // ZephyrParserWasm unavailable — return with statusStr=null
+              return { status: 'fetched', data: data };
+            }
+          }
+
+          return { status: 'fetched', data: data };
         })
         .catch(function(e){
           return { status: 'error', message: e.message };
@@ -11957,14 +12285,342 @@ var ZephyrRpcWasm = (function(){
 
   return Object.freeze({
     compile: compile,
-    buildRequest: buildRequest,
-    writeResponse: writeResponse,
-    parseResponse: parseResponse,
     rpcCall: rpcCall,
     reset: reset,
     isReady: function(){ return compiled; }
   });
 })();
+
+
+
+// =====================================================================
+// ZephyrParserWasm — Targeted JSON Extractor (v8.3.0)
+// =====================================================================
+// Architecture: Zero-allocation state-machine parser for the daemon
+// send_raw_transaction JSON-RPC response. Returns the literal status
+// STRING (not a pre-computed boolean) so the JS layer can show the
+// actual daemon response ("OK", "Failed", "Busy", etc.) instead of a
+// generic "not OK" message.
+//
+// Memory layout (1 page = 64KB):
+//   [0..255]    scratch / globals
+//   [256..271]  search key "\"status\":"           (9 bytes)
+//   [272..292]  search key "\"double_spend_seen\":" (20 bytes)
+//   [512..]     response buffer (JS writes here)
+//
+// Exports:
+//   process_response(resp_ptr, resp_len) -> i32   1=parsed status, 0=no status
+//   get_status_ptr() -> i32                       pointer into resp buffer
+//   get_status_len() -> i32                       length of status string
+//   get_is_double_spend() -> i32                  -1=missing, 0=false, 1=true
+//   reset_state()                                clears globals to defaults
+// =====================================================================
+var ZephyrParserWasm = (function(){
+  var instance = null;
+  var memory = null;
+  var compiled = false;
+  var WAT_SOURCE = `;; =====================================================================
+;; ZEPHYR TARGETED JSON EXTRACTOR — WAT Module (v8.3.0)
+;; =====================================================================
+;; Architecture: Zero-Allocation State-Machine Parser
+;;
+;; Design rationale (per Zephyr OS spec):
+;;   A general-purpose RFC 8259 JSON parser in raw WAT would be thousands
+;;   of lines. Because we know the EXACT schema of the Zephyr/Monero daemon
+;;   send_raw_transaction response, we scan the byte array specifically for
+;;   the keys "status" and "double_spend_seen" and extract their values.
+;;   This is ~100x faster and uses a fraction of the memory.
+;;
+;; Memory layout:
+;;   - 1 page (64KB) — sufficient for any RPC response (typically < 2KB)
+;;   - Offset 0-255:   scratch / globals storage
+;;   - Offset 256:     search key "\\"status\\":"
+;;   - Offset 272:     search key "\\"double_spend_seen\\":" (corrected from
+;;                     user's original "double_spend" — Monero/Zephyr daemon
+;;                     actually returns double_spend_seen)
+;;   - Offset 512+:    response buffer (JS writes here)
+;;
+;; Exports:
+;;   process_response(resp_ptr, resp_len) -> i32   (1=parsed, 0=no status)
+;;   get_status_ptr() -> i32                       (pointer into resp buffer)
+;;   get_status_len() -> i32                       (length of status string)
+;;   get_is_double_spend() -> i32                  (-1=missing, 0=false, 1=true)
+;; =====================================================================
+
+(module
+  ;; =========================================================
+  ;; 1. MEMORY & GLOBALS (State Management)
+  ;; =========================================================
+  (memory (export "memory") 1)
+
+  ;; Globals to hold the parsed results.
+  ;; JS reads these synchronously after process_response returns.
+  (global $status_ptr (mut i32) (i32.const 0))
+  (global $status_len (mut i32) (i32.const 0))
+  ;; -1 = not found, 0 = false, 1 = true
+  (global $is_double_spend (mut i32) (i32.const -1))
+
+  ;; =========================================================
+  ;; 2. DATA SEGMENTS (Search Keys)
+  ;; =========================================================
+  ;; Offset 256: "status": (9 bytes) — opening quote included in the value,
+  ;; not in the key. Key matches the literal bytes: " s t a t u s " :
+  (data (i32.const 256) "\\"status\\":")
+
+  ;; Offset 272: "double_spend_seen": (20 bytes)
+  ;; Corrected from the original "double_spend" — Zephyr/Monero daemon
+  ;; uses the _seen suffix. See C2.WALLET_RPC_SCHEMA for canonical keys.
+  (data (i32.const 272) "\\"double_spend_seen\\":")
+
+  ;; =========================================================
+  ;; 3. HELPER FUNCTIONS
+  ;; =========================================================
+
+  ;; Compares two memory regions byte-by-byte. Returns 1 if equal, 0 if not.
+  (func $mem_eq (param $p1 i32) (param $p2 i32) (param $len i32) (result i32)
+    (local $i i32)
+    (local.set $i (i32.const 0))
+    (block $break
+      (loop $loop
+        (br_if $break (i32.ge_u (local.get $i) (local.get $len)))
+        (if (i32.ne
+              (i32.load8_u (i32.add (local.get $p1) (local.get $i)))
+              (i32.load8_u (i32.add (local.get $p2) (local.get $i)))
+            )
+          (then (return (i32.const 0)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (i32.const 1)
+  )
+
+  ;; Skips JSON whitespace (space, tab, newline, carriage return).
+  ;; Returns the new pointer position.
+  (func $skip_ws (param $ptr i32) (param $max_ptr i32) (result i32)
+    (local $p i32)
+    (local $c i32)
+    (local.set $p (local.get $ptr))
+    (block $break
+      (loop $loop
+        (br_if $break (i32.ge_u (local.get $p) (local.get $max_ptr)))
+        (local.set $c (i32.load8_u (local.get $p)))
+        ;; Break if character is NOT space(32), tab(9), newline(10), or cr(13)
+        (br_if $break
+          (i32.and
+            (i32.ne (local.get $c) (i32.const 32))
+            (i32.and
+              (i32.ne (local.get $c) (i32.const 9))
+              (i32.and
+                (i32.ne (local.get $c) (i32.const 10))
+                (i32.ne (local.get $c) (i32.const 13))
+              )
+            )
+          )
+        )
+        (local.set $p (i32.add (local.get $p) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (local.get $p)
+  )
+
+  ;; =========================================================
+  ;; 4. MAIN PARSER (Phase 3)
+  ;; =========================================================
+  (func (export "process_response") (param $resp_ptr i32) (param $resp_len i32) (result i32)
+    (local $i i32)
+    (local $end_ptr i32)
+    (local $cur_ptr i32)
+    (local $val_start i32)
+    (local $val_end i32)
+    (local $c i32)
+
+    (local.set $i (i32.const 0))
+    (local.set $end_ptr (i32.add (local.get $resp_ptr) (local.get $resp_len)))
+
+    ;; Reset globals — defensive: even on re-parse, no stale state
+    (global.set $status_ptr (i32.const 0))
+    (global.set $status_len (i32.const 0))
+    (global.set $is_double_spend (i32.const -1))
+
+    (block $break
+      (loop $loop
+        (br_if $break (i32.ge_u (local.get $i) (local.get $resp_len)))
+
+        (local.set $cur_ptr (i32.add (local.get $resp_ptr) (local.get $i)))
+
+        ;; CHECK 1: Look for "status":
+        ;; Key at offset 256, length 9 bytes
+        (if (call $mem_eq (local.get $cur_ptr) (i32.const 256) (i32.const 9))
+          (then
+            ;; Advance past the key
+            (local.set $cur_ptr (i32.add (local.get $cur_ptr) (i32.const 9)))
+            ;; Skip whitespace
+            (local.set $cur_ptr (call $skip_ws (local.get $cur_ptr) (local.get $end_ptr)))
+
+            ;; Expect opening quote '"' (ASCII 34)
+            (if (i32.eq (i32.load8_u (local.get $cur_ptr)) (i32.const 34))
+              (then
+                (local.set $val_start (i32.add (local.get $cur_ptr) (i32.const 1)))
+                (local.set $val_end (local.get $val_start))
+
+                ;; Find closing quote '"'
+                (block $str_break
+                  (loop $str_loop
+                    (br_if $str_break (i32.ge_u (local.get $val_end) (local.get $end_ptr)))
+                    (br_if $str_break (i32.eq (i32.load8_u (local.get $val_end)) (i32.const 34)))
+                    (local.set $val_end (i32.add (local.get $val_end) (i32.const 1)))
+                    (br $str_loop)
+                  )
+                )
+
+                ;; Save results to globals
+                (global.set $status_ptr (local.get $val_start))
+                (global.set $status_len (i32.sub (local.get $val_end) (local.get $val_start)))
+
+                ;; Advance main loop index past this value
+                (local.set $i (i32.sub (i32.add (local.get $val_end) (i32.const 1)) (local.get $resp_ptr)))
+              )
+            )
+          )
+          (else
+            ;; CHECK 2: Look for "double_spend_seen":
+            ;; Key at offset 272, length 20 bytes (CORRECTED from user's 15)
+            (if (call $mem_eq (local.get $cur_ptr) (i32.const 272) (i32.const 20))
+              (then
+                (local.set $cur_ptr (i32.add (local.get $cur_ptr) (i32.const 20)))
+                (local.set $cur_ptr (call $skip_ws (local.get $cur_ptr) (local.get $end_ptr)))
+
+                ;; Check for boolean 't' (116) or 'f' (102)
+                (local.set $c (i32.load8_u (local.get $cur_ptr)))
+                (if (i32.eq (local.get $c) (i32.const 116)) ;; 't'
+                  (then (global.set $is_double_spend (i32.const 1)))
+                  (else
+                    (if (i32.eq (local.get $c) (i32.const 102)) ;; 'f'
+                      (then (global.set $is_double_spend (i32.const 0)))
+                    )
+                  )
+                )
+                ;; Advance main loop index (skip past the boolean value)
+                (local.set $i (i32.add (local.get $i) (i32.const 20)))
+              )
+            )
+          )
+        )
+
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+
+    ;; Return 1 if we successfully found and parsed the status, 0 otherwise
+    (if (i32.gt_u (global.get $status_len) (i32.const 0))
+      (then (return (i32.const 1)))
+    )
+    (i32.const 0)
+  )
+
+  ;; =========================================================
+  ;; 5. EXPORTED GETTERS (For JS to read the parsed state)
+  ;; =========================================================
+  (func (export "get_status_ptr") (result i32) (global.get $status_ptr))
+  (func (export "get_status_len") (result i32) (global.get $status_len))
+  (func (export "get_is_double_spend") (result i32) (global.get $is_double_spend))
+
+  ;; =========================================================
+  ;; 6. RESET (defensive — JS calls between unrelated parses)
+  ;; =========================================================
+  (func (export "reset_state")
+    (global.set $status_ptr (i32.const 0))
+    (global.set $status_len (i32.const 0))
+    (global.set $is_double_spend (i32.const -1))
+  )
+)
+`;
+
+  function compile(){
+    if(compiled) return Promise.resolve(instance);
+    if(typeof WabtModule === 'undefined'){
+      return new Promise(function(resolve){
+        var wait = setInterval(function(){
+          if(typeof WabtModule !== 'undefined'){ clearInterval(wait); compile().then(resolve); }
+        }, 200);
+      });
+    }
+    return WabtModule().then(function(wabt){
+      var mod = wabt.parseWat('zephyr_parser.wat', WAT_SOURCE);
+      mod.resolveNames();
+      mod.validate();
+      var bin = mod.toBinary({write_debug_names: false});
+      mod.destroy();
+      var bytes = new Uint8Array(bin.buffer);
+      var compiledMod = new WebAssembly.Module(bytes);
+      instance = new WebAssembly.Instance(compiledMod, {});
+      memory = instance.exports.memory;
+      compiled = true;
+      return instance;
+    });
+  }
+
+  // Write a JS string into WASM linear memory at the given offset
+  function writeBytes(ptr, bytes){
+    var view = new Uint8Array(memory.buffer, ptr, bytes.length);
+    view.set(bytes);
+  }
+
+  // Read the parsed status string out of WASM linear memory.
+  // Returns null if no status was parsed.
+  function readStatus(){
+    if(!instance) return null;
+    var ptr = instance.exports.get_status_ptr();
+    var len = instance.exports.get_status_len();
+    if(len === 0) return null;
+    var view = new Uint8Array(memory.buffer, ptr, len);
+    var str = '';
+    for(var i=0; i<len; i++) str += String.fromCharCode(view[i]);
+    return str;
+  }
+
+  // Synchronous parse of a raw response string. Returns:
+  //   { parseSuccess:bool, status:string|null, doubleSpend:int (-1|0|1) }
+  // JS is the dumb pipe — WASM owns all parsing logic.
+  function parseResponse(respText){
+    if(!instance) return { parseSuccess:false, status:null, doubleSpend:-1 };
+    var respBytes = new TextEncoder().encode(respText);
+    // Cap at 32KB to fit within WASM page (64KB minus the 512-byte header)
+    if(respBytes.length > 32768){
+      throw new Error('Response too large for ZephyrParserWasm buffer');
+    }
+    var respPtr = 512;
+    writeBytes(respPtr, respBytes);
+    instance.exports.reset_state();
+    var parseSuccess = instance.exports.process_response(respPtr, respBytes.length) === 1;
+    // Read status FIRST — the status_ptr/len still point into the response buffer.
+    // (Scrubbing before reading would zero out the very bytes we want to decode.)
+    var statusStr = readStatus();
+    var doubleSpend = instance.exports.get_is_double_spend();
+    // NOW scrub the response buffer (Layer 3 hygiene — never leave raw response
+    // bytes in WASM memory after parsing).
+    var scrubView = new Uint8Array(memory.buffer, respPtr, respBytes.length);
+    for(var i=0; i<respBytes.length; i++) scrubView[i] = 0;
+    return {
+      parseSuccess: parseSuccess,
+      status: statusStr,
+      doubleSpend: doubleSpend
+    };
+  }
+
+  return Object.freeze({
+    compile: compile,
+    parseResponse: parseResponse,
+    readStatus: readStatus,
+    isReady: function(){ return compiled; }
+  });
+})();
+
+
 
 Apps.zephyrWallet = function(){
   var id = 'zephyr-wallet';
@@ -12879,11 +13535,19 @@ Apps.zephyrWallet = function(){
       // Use ZephyrRpcWasm for the entire RPC call
       ZephyrRpcWasm.rpcCall(3, daemonUrl, txHex).then(function(result){
         if(result.status === 'fetched' && result.data){
-          if(result.data.statusOk){
-            statusEl2.innerHTML = '<span style="color:#10b981">✓ Transaction relayed successfully!</span>';
+          // v8.3.0: statusStr comes from ZephyrParserWasm (literal daemon string)
+          var statusStr = result.data.statusStr || (result.data.statusOk ? 'OK' : 'Unknown');
+          if(result.data.statusOk && statusStr === 'OK'){
+            statusEl2.innerHTML = '<span style="color:#10b981">✓ Transaction relayed! (status: ' + C2.string.escapeHtml(statusStr) + ')</span>';
             Toast.success('TX relayed via WASM RPC', 3000);
+          } else if(result.data.doubleSpend){
+            statusEl2.innerHTML = '<span style="color:#ef4444">✗ Rejected: double-spend detected (status: ' + C2.string.escapeHtml(statusStr) + ')</span>';
+          } else if(result.data.feeTooLow){
+            statusEl2.innerHTML = '<span style="color:#ef4444">✗ Rejected: fee too low (status: ' + C2.string.escapeHtml(statusStr) + ')</span>';
+          } else if(result.data.notRelayed){
+            statusEl2.innerHTML = '<span style="color:#ef4444">✗ Rejected: not relayed (status: ' + C2.string.escapeHtml(statusStr) + ')</span>';
           } else {
-            statusEl2.innerHTML = '<span style="color:#f59e0b">⚠ Response received but status not OK</span>';
+            statusEl2.innerHTML = '<span style="color:#f59e0b">⚠ Response received but status="' + C2.string.escapeHtml(statusStr) + '"</span>';
           }
         } else {
           statusEl2.innerHTML = '<span style="color:#ef4444">Error: ' + (result.message || 'unknown') + '</span>';
@@ -14764,6 +15428,8 @@ function boot(){
 window.Apps = Apps;
 window.WM = WM;
 window.HomeScreen = HomeScreen;
+// v8.3.0 debug hook: expose ZephyrParserWasm for diagnostics & integration tests
+window.ZephyrParserWasm = ZephyrParserWasm;
 
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
@@ -15180,11 +15846,19 @@ else boot();
       // Use ZephyrRpcWasm for the entire RPC call
       ZephyrRpcWasm.rpcCall(3, daemonUrl, txHex).then(function(result){
         if(result.status === 'fetched' && result.data){
-          if(result.data.statusOk){
-            statusEl2.innerHTML = '<span style="color:#10b981">✓ Transaction relayed successfully!</span>';
+          // v8.3.0: statusStr comes from ZephyrParserWasm (literal daemon string)
+          var statusStr = result.data.statusStr || (result.data.statusOk ? 'OK' : 'Unknown');
+          if(result.data.statusOk && statusStr === 'OK'){
+            statusEl2.innerHTML = '<span style="color:#10b981">✓ Transaction relayed! (status: ' + C2.string.escapeHtml(statusStr) + ')</span>';
             Toast.success('TX relayed via WASM RPC', 3000);
+          } else if(result.data.doubleSpend){
+            statusEl2.innerHTML = '<span style="color:#ef4444">✗ Rejected: double-spend detected (status: ' + C2.string.escapeHtml(statusStr) + ')</span>';
+          } else if(result.data.feeTooLow){
+            statusEl2.innerHTML = '<span style="color:#ef4444">✗ Rejected: fee too low (status: ' + C2.string.escapeHtml(statusStr) + ')</span>';
+          } else if(result.data.notRelayed){
+            statusEl2.innerHTML = '<span style="color:#ef4444">✗ Rejected: not relayed (status: ' + C2.string.escapeHtml(statusStr) + ')</span>';
           } else {
-            statusEl2.innerHTML = '<span style="color:#f59e0b">⚠ Response received but status not OK</span>';
+            statusEl2.innerHTML = '<span style="color:#f59e0b">⚠ Response received but status="' + C2.string.escapeHtml(statusStr) + '"</span>';
           }
         } else {
           statusEl2.innerHTML = '<span style="color:#ef4444">Error: ' + (result.message || 'unknown') + '</span>';
@@ -17065,6 +17739,8 @@ function boot(){
 window.Apps = Apps;
 window.WM = WM;
 window.HomeScreen = HomeScreen;
+// v8.3.0 debug hook: expose ZephyrParserWasm for diagnostics & integration tests
+window.ZephyrParserWasm = ZephyrParserWasm;
 
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
