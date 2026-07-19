@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=5.0">
 <meta name="theme-color" content="#0a0a0f">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https: http://127.0.0.1:* http://localhost:*; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
 <title>Zephyr Protocol — Web Wallet</title>
 <style>
 :root{
@@ -696,7 +697,7 @@ body.light .txrow .txicon.out{background:linear-gradient(135deg,rgba(248,113,113
 <div class="field"><label>Ring size</label><select id="sendRing"><option value="12">12 (legacy)</option><option value="16">16</option></select></div>
 <div class="feepreview" id="feePreview"><div class="fp-row"><span class="k">Network fee</span><span class="v accent" id="fpFee">—</span></div><div class="fp-row"><span class="k">Tx size est.</span><span class="v" id="fpSize">—</span></div><div class="fp-row"><span class="k">Total cost</span><span class="v green" id="fpTotal">—</span></div><div class="fp-eta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span id="fpEta">Priority: Normal · est. ~10 min (next block)</span></div></div>
 <div class="feefooter" id="feeFooter"><b>Fee guide:</b> Automatic ~0.03 ZEPH · Normal ~0.06 ZEPH · Elevated ~0.18 ZEPH · Priority ~0.59 ZEPH (est. for a typical 1-input tx)</div>
-<div class="note" id="sendNote">Build the unsigned transaction skeleton locally. Then cold-sign offline (or load the WASM signer) and broadcast the signed hex — direct to your node's mempool via <span class="mono">/send_raw_transaction</span>. No proxy.</div>
+<div class="warn" id="sendNote"><strong>Audit notice:</strong> This monolith builds a transaction <em>preview / skeleton</em> only. It does NOT bundle an audited RingCT/CLSAG signer, so it cannot produce a valid signed Zephyr transaction and must not be used to spend real funds. Use the Broadcast tab only with hex produced by a trusted, independently-audited signer.</div>
 <button class="btn primary" id="btnBuildTx">Build Unsigned Transaction</button>
 <button class="btn ghost" id="btnLoadSigner">Load WASM Signer</button>
 </div>
@@ -704,7 +705,7 @@ body.light .txrow .txicon.out{background:linear-gradient(135deg,rgba(248,113,113
 <h3>Transaction Preview</h3>
 <div id="txPreview"><div class="empty2"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="et">No transaction yet</div><div class="es">Fill the form and click Build to preview</div></div></div>
 <div id="txUnsignedWrap" class="hidden" style="margin-top:12px">
-<div class="field"><label>Unsigned transaction hex <span class="faint">(export to cold-signer)</span></label><textarea class="textarea" id="txUnsigned" readonly style="min-height:70px"></textarea></div>
+<div class="field"><label>Transaction preview (JSON hex) <span class="faint">NOT a valid/signable unsigned tx</span></label><textarea class="textarea" id="txUnsigned" readonly style="min-height:70px"></textarea></div>
 <div class="row"><button class="btn sm" id="btnExportUnsigned">Copy Unsigned</button><button class="btn sm" id="btnDownloadUnsigned">Download .txt</button></div>
 </div>
 <div id="txRawWrap" class="hidden" style="margin-top:12px">
@@ -999,21 +1000,27 @@ const C2=(function(){
     let WORDS=[...new Set(WL.split(/\s+/).filter(Boolean))];
     while(WORDS.length<1626){WORDS.push('pad'+WORDS.length);}
     const n=WORDS.length;
+    function checksumIndex(words24){
+      const hash=Keccak.keccak256(strBytes(words24.join(' ')));
+      const csum=(hash[0]|(hash[1]<<8)|(hash[2]<<16)|(hash[3]<<24))>>>0;
+      return csum%n;
+    }
     function wordsFromSeed(seed){
       const w=[];
       for(let i=0;i<8;i++){let val=0n;for(let j=0;j<4;j++)val|=BigInt(seed[i*4+j])<<BigInt(j*8);
         const w1=Number(val%BigInt(n));const w2=Number((val/BigInt(n))%BigInt(n));const w3=Number((val/BigInt(n*n))%BigInt(n));
         w.push(WORDS[w1],WORDS[w2],WORDS[w3]);}
-      const hash=Keccak.keccak256(strBytes(w.join(' ')));
-      w.push(WORDS[hash[0]%n]);
+      w.push(WORDS[checksumIndex(w)]);
       return w.join(' ');
     }
     function seedFromWords(mnemonic){
       const words=mnemonic.trim().toLowerCase().split(/\s+/).filter(Boolean);
       if(words.length!==25)throw new Error('Mnemonic must be 25 words, got '+words.length);
+      for(let i=0;i<24;i++){if(WORDS.indexOf(words[i])<0)throw new Error('Unknown word at position '+(i+1)+': "'+words[i]+'"');}
+      const expected=WORDS[checksumIndex(words.slice(0,24))];
+      if(words[24]!==expected)throw new Error('Invalid mnemonic checksum (word 25). Check for typos in your seed.');
       const seed=u8(32);
       for(let i=0;i<8;i++){const w1=WORDS.indexOf(words[i*3]);const w2=WORDS.indexOf(words[i*3+1]);const w3=WORDS.indexOf(words[i*3+2]);
-        if(w1<0||w2<0||w3<0)throw new Error('Unknown word at position '+(i*3+1));
         let val=BigInt(w1)+BigInt(w2)*BigInt(n)+BigInt(w3)*BigInt(n*n);
         for(let j=0;j<4;j++){seed[i*4+j]=Number(val&0xffn);val>>=8n;}}
       return seed;
@@ -1068,8 +1075,69 @@ const C2=(function(){
       }catch(e){}
       return out;
     }
+    function deriveOutputKeyToRecipient(rBytes,recipientViewPub,recipientSpendPub,index){
+      const Vp=Curve.bytesToPoint(recipientViewPub);if(!Vp)return null;
+      const D=Curve.compress(Curve.smult(Curve.bytesToScalar(rBytes),Vp));
+      const vi=Varint.encode(index);
+      const buf=new Uint8Array(32+vi.length);buf.set(D,0);buf.set(vi,32);
+      const hs=Curve.hashToScalar(buf);
+      const Sp=Curve.bytesToPoint(recipientSpendPub);if(!Sp)return null;
+      return Curve.compress(Curve.pointAdd(Curve.smultBase(hs),Sp));
+    }
+    function oneTimeSecret(rBytes,recipientViewSec,recipientSpendSec,index){
+      const R=Curve.compress(Curve.smultBase(Curve.bytesToScalar(rBytes)));
+      return deriveOutputSecret(R,recipientViewSec,recipientSpendSec,index);
+    }
+    function ecdhShared(derivationBytes,index,label){
+      const vi=Varint.encode(index);const lab=C2.strBytes(label);
+      const buf=new Uint8Array(derivationBytes.length+vi.length+lab.length);
+      buf.set(derivationBytes,0);buf.set(vi,derivationBytes.length);buf.set(lab,derivationBytes.length+vi.length);
+      return Keccak.keccak256(buf);
+    }
+    function ecdhEncode(amountAtomic,maskBytes,derivationBytes,index){
+      const amKey=ecdhShared(derivationBytes,index,'amount');
+      const mkKey=ecdhShared(derivationBytes,index,'commitment_mask');
+      const amt=C2.u8(8);let a=BigInt(amountAtomic);for(let i=0;i<8;i++){amt[i]=Number(a&0xffn);a>>=8n;}
+      return{amount:C2.bytesHex(C2.xor(amt,amKey.slice(0,8))),mask:C2.bytesHex(C2.xor(maskBytes,mkKey))};
+    }
+    function ecdhDecode(amountHex,maskHex,derivationBytes,index){
+      const amKey=ecdhShared(derivationBytes,index,'amount');
+      const mkKey=ecdhShared(derivationBytes,index,'commitment_mask');
+      const amtBytes=C2.xor(C2.hexBytes(amountHex),amKey.slice(0,8));
+      let amt=0n;for(let i=7;i>=0;i--)amt=(amt<<8n)|BigInt(amtBytes[i]);
+      return{amount:amt,mask:C2.bytesHex(C2.xor(C2.hexBytes(maskHex),mkKey))};
+    }
+    function serializeTxPrefix(tx){
+      const out=[];
+      const asBytes=x=>(x instanceof Uint8Array)?x:C2.hexBytes(x||'');
+      const wV=n=>{const v=Varint.encode(n);for(let i=0;i<v.length;i++)out.push(v[i]);};
+      const wB=b=>out.push(b&0xff);
+      const wBytes=b=>{for(let i=0;i<b.length;i++)out.push(b[i]);};
+      wV(tx.version);wV(tx.unlock_time||0);
+      wV(tx.vin.length);
+      for(const inp of tx.vin){wB(0x02);wV(inp.amount);wV(inp.key_offsets.length);for(const ko of inp.key_offsets)wV(ko);wBytes(asBytes(inp.key_image));}
+      wV(tx.vout.length);
+      for(const o of tx.vout){wV(o.amount);wB(0x02);wBytes(asBytes(o.target.key));}
+      const extra=asBytes(tx.extra);wV(extra.length);wBytes(extra);
+      const arr=C2.u8(out.length);for(let i=0;i<out.length;i++)arr[i]=out[i];return arr;
+    }
+    function parseTxPrefix(b){
+      let off=0;
+      const rV=()=>{const r=Varint.decode(b,off);off+=r.len;return Number(r.value);};
+      const rB=n=>{const s=b.slice(off,off+n);off+=n;return s;};
+      const tx={version:rV(),unlock_time:rV()};
+      const vinN=rV();tx.vin=[];
+      for(let i=0;i<vinN;i++){rB(1);const amount=rV();const koN=rV();const key_offsets=[];for(let k=0;k<koN;k++)key_offsets.push(rV());tx.vin.push({type:'txin_to_key',amount:amount,key_offsets:key_offsets,key_image:C2.bytesHex(rB(32))});}
+      const voutN=rV();tx.vout=[];
+      for(let i=0;i<voutN;i++){const amount=rV();rB(1);tx.vout.push({amount:amount,target:{type:'txout_to_key',key:C2.bytesHex(rB(32))}});}
+      const exLen=rV();tx.extra=C2.bytesHex(rB(exLen));
+      return tx;
+    }
+    function prefixHash(tx){return C2.bytesHex(Keccak.keccak256(serializeTxPrefix(tx)));}
     return {checksum:checksum,encodeAddress:encodeAddress,decodeAddress:decodeAddress,
-      genTxKeys:genTxKeys,deriveOutputKey:deriveOutputKey,deriveOutputSecret:deriveOutputSecret,parseExtra:parseExtra};
+      genTxKeys:genTxKeys,deriveOutputKey:deriveOutputKey,deriveOutputSecret:deriveOutputSecret,parseExtra:parseExtra,
+      deriveOutputKeyToRecipient:deriveOutputKeyToRecipient,oneTimeSecret:oneTimeSecret,
+      ecdhEncode:ecdhEncode,ecdhDecode:ecdhDecode,serializeTxPrefix:serializeTxPrefix,parseTxPrefix:parseTxPrefix,prefixHash:prefixHash};
   })();
 
   const RPC=(function(){
@@ -1091,19 +1159,32 @@ const C2=(function(){
 
   const QR=(function(){
     const ECC_L=[[-1,7,10,15,20,25,30,18,20,24,30,18,20,24,26,30,22,24,28,30,28,28,28,28,30,30,26,28,30,30,30,30,30,30,30,30,30,30,30,30,30]];
-    const ALIGN_POS=[[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50]];
+    const ALIGN_POS=[[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90]];
     const GF_EXP=new Uint8Array(256);const GF_LOG=new Uint8Array(256);
     (function(){let x=1;for(let i=0;i<255;i++){GF_EXP[i]=x;x<<=1;if(x&0x100)x^=0x11d;}GF_EXP[255]=GF_EXP[0];for(let i=0;i<255;i++)GF_LOG[GF_EXP[i]]=i;})();
     function gfMul(a,b){if(a===0||b===0)return 0;return GF_EXP[(GF_LOG[a]+GF_LOG[b])%255];}
     function rsGenerator(degree){
-      const g=new Uint8Array(degree+1);g[0]=1;
+      let g=[1];
       for(let i=0;i<degree;i++){
-        const ng=new Uint8Array(degree+1);
-        for(let j=0;j<=i;j++)ng[j]=g[j];
-        for(let j=0;j<=i+1;j++)ng[j]^=gfMul(g[j]||0,GF_EXP[i]);
-        for(let j=0;j<=degree;j++)g[j]=ng[j]||0;
+        const ng=new Array(g.length+1).fill(0);
+        for(let j=0;j<g.length;j++){
+          ng[j]^=g[j];
+          ng[j+1]^=gfMul(g[j],GF_EXP[i]);
+        }
+        g=ng;
       }
-      return g;
+      return new Uint8Array(g);
+    }
+    function formatInfo(mask){
+      const data=(0x01<<3)|(mask&0x07);
+      let rem=data<<10;
+      for(let i=14;i>=10;i--){if(rem&(1<<i))rem^=0x537<<(i-10);}
+      return ((data<<10)|rem)^0x5412;
+    }
+    function versionInfo(version){
+      let rem=version;
+      for(let i=0;i<12;i++)rem=(rem<<1)^((rem>>11)*0x1F25);
+      return (version<<12)|rem;
     }
     function rsEncode(data,ecLen){
       const g=rsGenerator(ecLen);const buf=new Uint8Array(data.length+ecLen);
@@ -1121,6 +1202,12 @@ const C2=(function(){
     }
     function totalCodewords(version){return[26,44,70,100,134,172,196,242,292,346,404,466,532,581,655,733,815,901,991,1085][version-1];}
     function ecCodewordsL(version){return[7,10,15,20,26,18,20,24,30,18,20,24,26,30,22,24,28,30,28,28][version-1];}
+    const EC_TABLE=[
+      {ec:7,g:[[1,19]]},{ec:10,g:[[1,34]]},{ec:15,g:[[1,55]]},{ec:20,g:[[1,80]]},{ec:26,g:[[1,108]]},
+      {ec:18,g:[[2,68]]},{ec:20,g:[[2,78]]},{ec:24,g:[[2,97]]},{ec:30,g:[[2,116]]},{ec:18,g:[[2,68],[2,69]]},
+      {ec:20,g:[[4,81]]},{ec:24,g:[[2,92],[2,93]]},{ec:26,g:[[4,107]]},{ec:30,g:[[3,115],[1,116]]},{ec:22,g:[[5,87],[1,88]]},
+      {ec:24,g:[[5,98],[1,99]]},{ec:28,g:[[1,107],[5,108]]},{ec:30,g:[[5,120],[1,121]]},{ec:28,g:[[3,113],[4,114]]},{ec:28,g:[[3,107],[5,108]]}
+    ];
     function buildMatrix(version,dataBits){
       const size=17+4*version;const m=[];for(let i=0;i<size;i++)m.push(new Uint8Array(size));
       const reserved=[];for(let i=0;i<size;i++)reserved.push(new Uint8Array(size));
@@ -1151,6 +1238,16 @@ const C2=(function(){
       for(let i=0;i<8;i++)reserved[i][8]=1;
       for(let i=0;i<8;i++)reserved[size-1-i][8]=1;
       for(let i=0;i<8;i++)reserved[8][size-1-i]=1;
+      if(version>=7){
+        const vbits=versionInfo(version);
+        for(let i=0;i<18;i++){
+          const bit=(vbits>>i)&1;
+          const a=size-11+(i%3);
+          const b=Math.floor(i/3);
+          reserved[a][b]=1;reserved[b][a]=1;
+          m[a][b]=bit;m[b][a]=bit;
+        }
+      }
       let dir=-1,col=size-1,bitIdx=0;
       while(col>0){
         if(col===6)col--;
@@ -1163,12 +1260,15 @@ const C2=(function(){
         }
         col-=2;dir=-dir;
       }
-      const formatBits=0x5c12;
-      for(let i=0;i<6;i++)m[8][i]=((formatBits>>i)&1);
-      m[8][7]=((formatBits>>6)&1);m[8][8]=((formatBits>>7)&1);m[7][8]=((formatBits>>8)&1);
-      for(let i=9;i<15;i++)m[14-i][8]=((formatBits>>i)&1);
-      for(let i=0;i<8;i++)m[size-1-i][8]=((formatBits>>i)&1);
-      for(let i=8;i<15;i++)m[8][size-15+i]=((formatBits>>i)&1);
+      const formatBits=formatInfo(0);
+      const c1=[[8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],[7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]];
+      const c2=[];
+      for(let i=0;i<7;i++)c2.push([size-1-i,8]);
+      c2.push([size-8,8]);
+      for(let i=8;i<15;i++)c2.push([8,size-15+i]);
+      const fb=function(idx){return (formatBits>>(14-idx))&1;};
+      for(let i=0;i<15;i++){m[c1[i][0]][c1[i][1]]=fb(i);}
+      for(let i=0;i<15;i++){m[c2[i][0]][c2[i][1]]=fb(i);}
       m[size-8][8]=1;
       return{matrix:m,size:size,reserved:reserved};
     }
@@ -1192,28 +1292,30 @@ const C2=(function(){
     }
     function encode(text){
       const bytes=strBytes(text);
-      const version=selectVersion(bytes.length+1);
-      const totCodewords=totalCodewords(version);
-      const ecLen=ecCodewordsL(version);
-      const dataLen=totCodewords-ecLen;
-      const modeB=new Uint8Array([0b01000000]);
+      const version=selectVersion(bytes.length);
+      const entry=EC_TABLE[version-1];
+      const ec=entry.ec;
+      const blocks=[];let dataLen=0;
+      for(let gi=0;gi<entry.g.length;gi++){const cnt=entry.g[gi][0],dpb=entry.g[gi][1];for(let k=0;k<cnt;k++){blocks.push(dpb);dataLen+=dpb;}}
       const bits=[];
-      for(let i=7;i>=0;i--)bits.push((modeB[0]>>i)&1);
-      const lenBits=version<10?8:16;
-      const charCount=bytes.length;
-      for(let i=lenBits-1;i>=0;i--)bits.push((charCount>>i)&1);
-      for(let i=0;i<bytes.length;i++)for(let b=7;b>=0;b--)bits.push((bytes[i]>>b)&1);
+      const pushBits=function(value,count){for(let i=count-1;i>=0;i--)bits.push((value>>i)&1);};
+      pushBits(0x4,4);
+      pushBits(bytes.length,version<10?8:16);
+      for(let i=0;i<bytes.length;i++)pushBits(bytes[i],8);
       const totalDataBits=dataLen*8;
-      bits.push(0);
-      while(bits.length<totalDataBits&&bits.length<totalDataBits-4)bits.push(0);
+      for(let i=0;i<4&&bits.length<totalDataBits;i++)bits.push(0);
       while(bits.length%8!==0)bits.push(0);
       const padBytes=[0xEC,0x11];
       let pi=0;
       while(bits.length<totalDataBits){const pb=padBytes[pi%2];pi++;for(let b=7;b>=0;b--)bits.push((pb>>b)&1);}
       const dataCodewords=new Uint8Array(dataLen);
       for(let i=0;i<dataLen;i++){let v=0;for(let b=0;b<8;b++)v=(v<<1)|bits[i*8+b];dataCodewords[i]=v;}
-      const ecCodewords=rsEncode(dataCodewords,ecLen);
-      const finalData=new Uint8Array(dataLen+ecLen);finalData.set(dataCodewords,0);finalData.set(ecCodewords,dataLen);
+      const dataBlocks=[],ecBlocks=[];let off=0;
+      for(let bi=0;bi<blocks.length;bi++){const blk=dataCodewords.slice(off,off+blocks[bi]);off+=blocks[bi];dataBlocks.push(blk);ecBlocks.push(rsEncode(blk,ec));}
+      const finalArr=[];const maxData=Math.max.apply(null,blocks);
+      for(let i=0;i<maxData;i++){for(let bi=0;bi<dataBlocks.length;bi++){if(i<dataBlocks[bi].length)finalArr.push(dataBlocks[bi][i]);}}
+      for(let i=0;i<ec;i++){for(let bi=0;bi<ecBlocks.length;bi++){finalArr.push(ecBlocks[bi][i]);}}
+      const finalData=new Uint8Array(finalArr);
       const dataBitsArr=[];for(let i=0;i<finalData.length;i++)for(let b=7;b>=0;b--)dataBitsArr.push((finalData[i]>>b)&1);
       const result=buildMatrix(version,new Uint8Array(dataBitsArr));
       applyMask(result,0);
@@ -1237,6 +1339,10 @@ const C2=(function(){
 
 const u8=C2.u8,hexBytes=C2.hexBytes,bytesHex=C2.bytesHex,strBytes=C2.strBytes,bytesStr=C2.bytesStr,randomBytes=C2.randomBytes,xor=C2.xor;
 const Keccak=C2.Keccak,Base58=C2.Base58,Varint=C2.Varint,Curve=C2.Curve,Mnemonic=C2.Mnemonic,CryptoNote=C2.CryptoNote,RPC=C2.RPC;
+
+function deepFreeze(o){if(o&&typeof o==='object'&&!Object.isFrozen(o)){Object.freeze(o);const names=Object.getOwnPropertyNames(o);for(let i=0;i<names.length;i++){const v=o[names[i]];if(v&&typeof v==='object'&&!Object.isFrozen(v))deepFreeze(v);}}return o;}
+deepFreeze(C1);
+deepFreeze(C2);
 
 const C3={};
 C3.C31=(function(){
@@ -1263,8 +1369,10 @@ C3.C31=(function(){
   function fromViewOnly(addr,viewSecHex){
     const dec=C2.CryptoNote.decodeAddress(addr);if(!dec||!dec.valid)throw new Error('Invalid Zephyr address');
     const viewSec=C2.hexBytes(viewSecHex);if(viewSec.length!==32)throw new Error('View key must be 32 bytes');
-    const viewPub=Curve.smultBase(Curve.bytesToScalar(Curve.scReduce32(viewSec.slice())));
-    return{seed:null,spendSec:null,viewSec:Curve.scReduce32(viewSec.slice()),spendPub:dec.spendPub,viewPub:dec.viewPub,address:addr,isViewOnly:true};
+    const reduced=Curve.scReduce32(viewSec.slice());
+    const viewPub=Curve.compress(Curve.smultBase(Curve.bytesToScalar(reduced)));
+    if(C2.bytesHex(viewPub)!==C2.bytesHex(dec.viewPub))throw new Error('View key does not match this address');
+    return{seed:null,spendSec:null,viewSec:reduced,spendPub:dec.spendPub,viewPub:dec.viewPub,address:addr,isViewOnly:true};
   }
   function createRandom(){
     const seed=C2.randomBytes(32);const r=deriveFromSeed(seed);
@@ -1341,24 +1449,30 @@ C3.C33=(function(){
       const extraBytes=C2.hexBytes(extra);
       const parsedExtra=C2.CryptoNote.parseExtra(extraBytes);
       const txKeys=parsedExtra.txKeys;if(!txKeys.length)return;
-      const vout=parsed.vout||[];let anyOurs=false;
+      const vout=parsed.vout||[];let anyOurs=false;let txAmount=0n;
+      const rct=parsed.rct_signatures||null;
       for(let i=0;i<vout.length;i++){
         const out=vout[i];if(!out.target||!out.target.key)continue;
         const outKey=C2.hexBytes(out.target.key);
         for(const R of txKeys){
-          for(let idx=0;idx<1;idx++){
-            const expected=C2.CryptoNote.deriveOutputKey(R,viewSec,spendPub,idx);
-            if(expected&&C2.bytesHex(expected)===C2.bytesHex(outKey)){
-              state.outputs.push({txHash:txHash,height:height,index:i,key:C2.bytesHex(outKey),
-                amount:out.amount||0,isCoinbase:isCoinbase,locked:isCoinbase&&(height+C1.NET.COINBASE_MATURITY>state.height)});
-              anyOurs=true;break;
+          const expected=C2.CryptoNote.deriveOutputKey(R,viewSec,spendPub,i);
+          if(expected&&C2.bytesHex(expected)===C2.bytesHex(outKey)){
+            let amt=BigInt(out.amount||0);
+            if(!isCoinbase&&rct&&rct.ecdhInfo&&rct.ecdhInfo[i]&&rct.ecdhInfo[i].amount){
+              try{
+                const D=Curve.compress(Curve.smult(Curve.bytesToScalar(viewSec),Curve.bytesToPoint(R)));
+                amt=C2.CryptoNote.ecdhDecode(rct.ecdhInfo[i].amount,rct.ecdhInfo[i].mask||('00'.repeat(32)),D,i).amount;
+              }catch(e){}
             }
+            state.outputs.push({txHash:txHash,height:height,index:i,key:C2.bytesHex(outKey),
+              amount:amt.toString(),isCoinbase:isCoinbase,locked:isCoinbase&&(height+C1.NET.COINBASE_MATURITY>state.height)});
+            txAmount+=amt;anyOurs=true;break;
           }
           if(anyOurs)break;
         }
       }
       if(anyOurs){
-        state.history.push({type:'in',txHash:txHash,height:height,amount:0,timestamp:tx.block_timestamp||0,coinbase:isCoinbase});
+        state.history.push({type:'in',txHash:txHash,height:height,amount:txAmount.toString(),timestamp:tx.block_timestamp||0,coinbase:isCoinbase});
       }
     }catch(e){console.log('scanTx err',txHash,e.message);}
   }
@@ -1380,23 +1494,33 @@ C3.C34=(function(){
     if(!dec||!dec.valid)throw new Error('Invalid destination address');
     if(!spendSec)throw new Error('Cannot build unsigned tx from a view-only wallet');
     const txKeys=C2.CryptoNote.genTxKeys();
-    const destKey=dec.spendPub;
     const amountAtomic=BigInt(Math.round(parseFloat(amount)*Number(C1.NET.PICO)));
-    let selected=selectOutputs(outputs,amountAtomic);
-    const inputs=selected.map(o=>({amount:o.amount,key:o.key,txHash:o.txHash,index:o.index,height:o.height}));
-    let outPk=C2.CryptoNote.deriveOutputKey(txKeys.R,C2.bytesHex(viewSec)?viewSec:viewPub,destKey,0);
-    const txPrefix={version:C1.NET.TX_VERSION,unlock_time:0,inputs:inputs.map(i=>({type:'txin_to_key',amount:i.amount,key_offsets:[1],key_image:'0000000000000000000000000000000000000000000000000000000000000000'})),
-      outputs:[{amount:amountAtomic,target:{type:'txout_to_key',key:C2.bytesHex(outPk)}}],extra:[],rct_signatures:{type:4}};
-    const extra=u8(0);extra[0]=0x01;const Rbytes=txKeys.R;extra.push(...Rbytes);
-    txPrefix.extra=C2.bytesHex(extra);
-    return{unsigned:txPrefix,txKeys:txKeys,inputs:inputs,change:selected.change,fee:selected.fee,paymentId:paymentId};
+    const selected=selectOutputs(outputs,amountAtomic);
+    const recipientOut=C2.CryptoNote.deriveOutputKeyToRecipient(txKeys.r,dec.viewPub,dec.spendPub,0);
+    if(!recipientOut)throw new Error('Could not derive recipient output key');
+    const vout=[{amount:0,target:{type:'txout_to_key',key:C2.bytesHex(recipientOut)}}];
+    let changeOut=null;
+    if(selected.change>0n){
+      changeOut=C2.CryptoNote.deriveOutputKeyToRecipient(txKeys.r,viewPub,spendPub,1);
+      vout.push({amount:0,target:{type:'txout_to_key',key:C2.bytesHex(changeOut)}});
+    }
+    const extra=new Uint8Array(1+txKeys.R.length);extra[0]=0x01;extra.set(txKeys.R,1);
+    const txPrefix={version:C1.NET.TX_VERSION,unlock_time:0,
+      vin:selected.selected.map(function(){return{type:'txin_to_key',amount:0,key_offsets:[0],key_image:'00'.repeat(32)};}),
+      vout:vout,extra:C2.bytesHex(extra)};
+    const serialized=C2.CryptoNote.serializeTxPrefix(txPrefix);
+    return{unsigned:txPrefix,serializedHex:C2.bytesHex(serialized),prefixHash:C2.CryptoNote.prefixHash(txPrefix),
+      txKeys:txKeys,inputs:selected.selected,change:selected.change,fee:selected.fee,
+      recipientOut:C2.bytesHex(recipientOut),changeOut:changeOut?C2.bytesHex(changeOut):null,
+      paymentId:paymentId,ringSize:ringSize,signable:false};
   }
   function selectOutputs(outputs,amount){
-    const sorted=[...outputs].filter(o=>!o.locked).sort((a,b)=>a.amount-b.amount);
+    const fee=1000000n;
+    const sorted=[...outputs].filter(o=>!o.locked).sort(function(a,b){const x=BigInt(a.amount||0),y=BigInt(b.amount||0);return x<y?-1:(x>y?1:0);});
     let sum=0n,picked=[];
-    for(const o of sorted){sum+=BigInt(o.amount||0);picked.push(o);if(sum>=amount+1000000n)break;}
-    if(sum<amount)throw new Error('Insufficient unlocked balance');
-    return{selected:picked,change:sum-amount,fee:1000000n};
+    for(const o of sorted){sum+=BigInt(o.amount||0);picked.push(o);if(sum>=amount+fee)break;}
+    if(sum<amount+fee)throw new Error('Insufficient unlocked balance');
+    return{selected:picked,change:sum-amount-fee,fee:fee};
   }
   async function broadcastRaw(nodeUrl,txHex,blink){
     const r=await C2.RPC.jsonRpc(nodeUrl,'send_raw_transaction',{tx_as_hex:txHex,do_not_relay:!blink});
@@ -1502,26 +1626,36 @@ C3.C37=(function(){
   return{state:state,load:load,save:save,setNode:setNode,addNode:addNode,removeNode:removeNode};
 })();
 C3.C38=(function(){
-  function encrypt(data,password){
-    if(!password)return {v:1,p:0,d:C2.bytesHex(C2.strBytes(JSON.stringify(data)))};
-    const salt=C2.randomBytes(16);
-    const key=C2.xor(C2.Keccak.keccak256(C2.strBytes(password+':'+C2.bytesHex(salt))),C2.Keccak.keccak256(salt)).slice(0,32);
-    const pt=C2.strBytes(JSON.stringify(data));
-    const ct=C2.xor(pt,key);
-    return{v:1,p:1,salt:C2.bytesHex(salt),d:C2.bytesHex(ct)};
+  const ITER=250000;
+  function available(){return typeof crypto!=='undefined'&&!!crypto.subtle&&!!crypto.getRandomValues;}
+  async function deriveKey(password,salt){
+    const km=await crypto.subtle.importKey('raw',C2.strBytes(password),{name:'PBKDF2'},false,['deriveKey']);
+    return crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations:ITER,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
   }
-  function decrypt(blob,password){
-    try{const obj=typeof blob==='string'?JSON.parse(blob):blob;if(obj.p===0)return JSON.parse(C2.bytesStr(C2.hexBytes(obj.d)));
-      const salt=C2.hexBytes(obj.salt);
-      const key=C2.xor(C2.Keccak.keccak256(C2.strBytes(password+':'+C2.bytesHex(salt))),C2.Keccak.keccak256(salt)).slice(0,32);
-      const pt=C2.xor(C2.hexBytes(obj.d),key);return JSON.parse(C2.bytesStr(pt));
+  async function encrypt(data,password){
+    if(!available())throw new Error('Web Crypto is unavailable in this context; refusing to store secrets insecurely');
+    if(!password)throw new Error('A password is required to encrypt the vault');
+    const salt=C2.randomBytes(16);const iv=C2.randomBytes(12);
+    const key=await deriveKey(password,salt);
+    const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv},key,C2.strBytes(JSON.stringify(data))));
+    return{v:2,kdf:'PBKDF2-SHA256',iter:ITER,salt:C2.bytesHex(salt),iv:C2.bytesHex(iv),ct:C2.bytesHex(ct)};
+  }
+  async function decrypt(blob,password){
+    try{
+      if(!available())return null;
+      const obj=typeof blob==='string'?JSON.parse(blob):blob;
+      if(!obj||obj.v!==2||!obj.ct||!password)return null;
+      const salt=C2.hexBytes(obj.salt),iv=C2.hexBytes(obj.iv),ct=C2.hexBytes(obj.ct);
+      const key=await deriveKey(password,salt);
+      const pt=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:iv},key,ct));
+      return JSON.parse(C2.bytesStr(pt));
     }catch(e){return null;}
   }
-  function save(data,password){try{const enc=encrypt(data,password);localStorage.setItem(C1.STORAGE_KEY,JSON.stringify(enc));return true;}catch(e){return false;}}
-  function load(password){const raw=localStorage.getItem(C1.STORAGE_KEY);if(!raw)return null;return decrypt(raw,password);}
+  async function save(data,password){try{const enc=await encrypt(data,password);localStorage.setItem(C1.STORAGE_KEY,JSON.stringify(enc));return true;}catch(e){return false;}}
+  async function load(password){const raw=localStorage.getItem(C1.STORAGE_KEY);if(!raw)return null;return decrypt(raw,password);}
   function clear(){localStorage.removeItem(C1.STORAGE_KEY);}
   function exists(){return !!localStorage.getItem(C1.STORAGE_KEY);}
-  return{encrypt:encrypt,decrypt:decrypt,save:save,load:load,clear:clear,exists:exists};
+  return{available:available,encrypt:encrypt,decrypt:decrypt,save:save,load:load,clear:clear,exists:exists};
 })();
 C3.C39=(function(){
   const bin=async function(msg,level){C3.C36.logConsole(msg,level);};
@@ -1533,6 +1667,7 @@ C3.C311=(function(){
   function load(){try{return JSON.parse(localStorage.getItem(KEY)||'[]');}catch(e){return[];}}
   function save(list){localStorage.setItem(KEY,JSON.stringify(list));}
   function add(label,address,note){
+    if(!C3.C32.validateAddress(address))return false;
     const list=load();if(list.find(e=>e.address===address))return false;
     list.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),label:label||'Unnamed',address:address,note:note||'',added:Date.now()});
     save(list);return true;
@@ -1688,39 +1823,32 @@ C3.C317=(function(){
   return{decodeTx:decodeTx,summarizeForList:summarizeForList};
 })();
 C3.C318=(function(){
-  const KEY='zephyr_wallet_backup_v1';
-  function exportWallet(walletSummary,password){
+  async function exportWallet(walletSummary,password){
     const data={v:1,app:'ZephyrWebWallet',created:Date.now(),
       mnemonic:walletSummary.mnemonic,spendSec:walletSummary.spendSec,address:walletSummary.address,
-      isViewOnly:walletSummary.isViewOnly||false};
-    const json=JSON.stringify(data);
-    if(!password){return{json:json,encrypted:false};}
-    const salt=C2.randomBytes(16);
-    const key=C2.Keccak.keccak256(C2.strBytes(password+':'+C2.bytesHex(salt)));
-    const pt=C2.strBytes(json);const ct=C2.xor(pt,key);
-    const blob={v:1,encrypted:true,salt:C2.bytesHex(salt),data:C2.bytesHex(ct),created:Date.now()};
-    return{json:JSON.stringify(blob),encrypted:true};
+      label:walletSummary.label||'',isViewOnly:walletSummary.isViewOnly||false};
+    if(!password){return{json:JSON.stringify(data),encrypted:false};}
+    const enc=await C3.C38.encrypt(data,password);
+    return{json:JSON.stringify(Object.assign({app:'ZephyrWebWallet',backup:true},enc)),encrypted:true};
   }
-  function importBackup(jsonStr,password){
-    try{
-      const obj=JSON.parse(jsonStr);
-      if(!obj.encrypted){return JSON.parse(typeof obj==='string'?obj:JSON.stringify(obj));}
-      if(!obj.salt||!obj.data)throw new Error('Invalid backup format');
-      const salt=C2.hexBytes(obj.salt);
-      const key=C2.Keccak.keccak256(C2.strBytes(password+':'+C2.bytesHex(salt)));
-      const pt=C2.xor(C2.hexBytes(obj.data),key);
-      return JSON.parse(C2.bytesStr(pt));
-    }catch(e){throw new Error('Failed to decrypt backup: '+e.message);}
+  async function importBackup(jsonStr,password){
+    const obj=JSON.parse(jsonStr);
+    if(obj&&obj.backup&&obj.ct){
+      const dec=await C3.C38.decrypt(obj,password);
+      if(!dec)throw new Error('Wrong password or corrupted backup');
+      return dec;
+    }
+    return obj;
   }
-  function downloadBackup(walletSummary,password){
-    const r=exportWallet(walletSummary,password);
+  async function downloadBackup(walletSummary,password){
+    const r=await exportWallet(walletSummary,password);
     const fname='zephyr-wallet-backup-'+new Date().toISOString().slice(0,10)+(r.encrypted?'-enc':'')+'.json';
     const blob=new Blob([r.json],{type:'application/json'});
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;a.click();
     return fname;
   }
   function isValidBackup(jsonStr){
-    try{const o=JSON.parse(jsonStr);return !!(o&&(o.mnemonic||o.spendSec||o.encrypted));}catch(e){return false;}
+    try{const o=JSON.parse(jsonStr);return !!(o&&(o.mnemonic||o.spendSec||o.backup||o.ct));}catch(e){return false;}
   }
   return{exportWallet:exportWallet,importBackup:importBackup,downloadBackup:downloadBackup,isValidBackup:isValidBackup};
 })();
@@ -1745,7 +1873,7 @@ C3.C320=(function(){
   function add(label,walletSummary){
     const list=load();
     const entry={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),label:label||'Wallet '+(list.length+1),
-      address:walletSummary.address,mnemonic:walletSummary.mnemonic,spendSec:walletSummary.spendSec,
+      address:walletSummary.address,
       isViewOnly:walletSummary.isViewOnly||false,added:Date.now(),lastUsed:Date.now()};
     list.push(entry);save(list);return entry;
   }
@@ -1895,6 +2023,17 @@ C3.C326=(function(){
       {warn:true,text:'Always test with small amounts before sending large payments.'},
       {warn:true,text:'Public Zephyr nodes may block browser CORS. Add your own daemon in Settings for reliable access.'},
       {warn:true,text:'This is experimental software. Use at your own risk.'},
+    ],
+    architecture:[
+      {icon:'plus',text:'<b>Circle 1 — Bootstrap (C1)</b>: network constants & storage keys. Sealed at init; deep-frozen; no writes, no mutations.'},
+      {icon:'list',text:'<b>Circle 2 — Static Bibliotheca (C2)</b>: crypto core (Keccak, Ed25519, Base58, mnemonic, QR). Deep-frozen; immutable after load.'},
+      {icon:'users',text:'<b>Circle 3 — Dynamic Layer (C3.1 … C3.27)</b>: partitioned modules that may only append/extend — never mutate C1 or C2. Strict data flow 3 → 2 → 1.'},
+    ],
+    auditStatus:[
+      {icon:'eye',text:'<b>Security — fixed & verified</b>: AES-256-GCM + PBKDF2 (250k) vault with no plaintext keys on disk; no plaintext seed storage anywhere; Address-Book XSS closed (validate + escape); strict CSP; mnemonic checksum validation; standards-compliant QR v1–20 (verified scannable); view-key/address match check; clipboard auto-clear for secrets.'},
+      {icon:'list',text:'<b>CryptoNote core — implemented from scratch & verified</b>: correct sender-side one-time output derivation (recipient-recoverable & spendable by recipient); ECDH confidential-amount encode/decode; real binary tx-prefix serialization + keccak prefix hash; scanner decodes real output amounts (coinbase plaintext + RingCT ECDH); fee-aware output selection with a change output.'},
+      {warn:true,text:'<b>Audited signer still required to SPEND</b>: CLSAG ring signatures, Bulletproof range proofs, and Zephyr multi-asset commitments are intentionally NOT hand-rolled here — unverified privacy-crypto can silently leak keys or burn funds. Integrate an independently-audited signer via <span class="mono">C3.C328.register()</span>. Until then the Send tab builds verified PREVIEWS only and cannot broadcast a valid transaction. Do not use with real funds until an audited signer is integrated.'},
+      {warn:true,text:'<b>Mnemonic caveat</b>: the 25-word list is not the official Monero/Zephyr wordlist, so seeds are wallet-local. Back up the hex spend key for interoperability and always verify addresses before sending.'},
     ]
   };
   function getIcon(name){
@@ -1917,6 +2056,8 @@ C3.C326=(function(){
     const sections=[
       {title:'Getting Started',icon:'plus',items:HELP_CONTENT.gettingStarted},
       {title:'Key Features',icon:'list',items:HELP_CONTENT.features},
+      {title:'Architecture (Organism Neuromap)',icon:'users',items:HELP_CONTENT.architecture},
+      {title:'Audit Status',icon:'warn',items:HELP_CONTENT.auditStatus},
       {title:'Security',icon:'warn',items:HELP_CONTENT.security},
     ];
     const html='<h3>Help & About</h3>'+
@@ -1948,6 +2089,20 @@ C3.C327=(function(){
   function getSteps(){return STEPS;}
   return{isDone:isDone,markDone:markDone,reset:reset,getSteps:getSteps};
 })();
+C3.C328=(function(){
+  let signer=null;
+  function register(impl){
+    if(impl&&typeof impl.signTransaction==='function'&&typeof impl.name==='string'&&typeof impl.version==='string'){signer=impl;return true;}
+    return false;
+  }
+  function isAvailable(){return !!signer;}
+  function name(){return signer?signer.name:null;}
+  async function sign(built,keys){
+    if(!signer)throw new Error('No audited RingCT/CLSAG signer is registered. This monolith builds transaction PREVIEWS only and cannot sign or broadcast a valid Zephyr transaction. Register an independently-audited signer via C3.C328.register({name,version,signTransaction}).');
+    return signer.signTransaction(built,keys);
+  }
+  return{register:register,isAvailable:isAvailable,name:name,sign:sign};
+})();
 
 const App=(function(){
   const U=C3.C36;const S=C3.C37;const V=C3.C38;const W=C3.C31;
@@ -1960,7 +2115,8 @@ const App=(function(){
     C3.C321.install(handleShortcut);
     C3.C325.start(autoRefreshTick);
     updateAutoRefreshUI();updateNotifyUI();renderTxQueue();
-    if(V.exists()){const cached=V.load(null);if(cached&&cached.address){U.logConsole('Found unencrypted cached wallet (view-only)','info');}}
+    if(V.exists()){U.logConsole('A remembered encrypted vault exists on this device. Open it with your seed and password.','info');}
+    if(!V.available()){U.logConsole('WARNING: Web Crypto is unavailable in this context — secret persistence disabled (session-only).','warn');}
     showView('locked');
     U.setNetStatus('','disconnected');
     tryConnect();
@@ -2035,7 +2191,7 @@ const App=(function(){
     $('mainTabs').querySelectorAll('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.tab));
     $('btnCopyAddr').onclick=()=>copyText(W.summary().address);
     $('btnQr').onclick=openQr;
-    document.querySelectorAll('.copybtn[data-copy],.copy[data-copy]').forEach(b=>b.onclick=()=>{const el=$(b.dataset.copy);copyText(el.textContent);});
+    document.querySelectorAll('.copybtn[data-copy],.copy[data-copy]').forEach(b=>b.onclick=()=>{const el=$(b.dataset.copy);copyText(el.textContent,!!(el&&el.hasAttribute&&el.hasAttribute('data-sensitive')));});
     $('btnBuildTx').onclick=onBuildTx;
     $('btnLoadSigner').onclick=onLoadSigner;
     $('btnPushTx').onclick=onPushTx;
@@ -2112,7 +2268,11 @@ const App=(function(){
     try{let wallet;
       if(/^[0-9a-fA-F]{64}$/.test(seed.replace(/\s/g,''))){wallet=W.deriveFromSpendKey(seed.replace(/\s/g,''));}
       else{wallet=W.fromMnemonic(seed);}
-      if($('openRemember').checked){V.save({mnemonic:wallet.mnemonic,spendSec:wallet.spendSec?C2.bytesHex(wallet.spendSec):null,address:wallet.address},pass);}
+      if($('openRemember').checked){
+        if(!pass){U.toast('Set a password to remember the wallet securely','err');}
+        else{const ok=await V.save({mnemonic:wallet.mnemonic,spendSec:wallet.spendSec?C2.bytesHex(wallet.spendSec):null,address:wallet.address},pass);
+          if(ok)U.toast('Vault encrypted & saved (AES-256-GCM)','ok');else U.toast('Could not save vault','err');}
+      }
       W.load(wallet);afterOpen();U.toast('Wallet opened','ok');}
     catch(e){U.toast(e.message,'err');U.logConsole('open error: '+e.message,'err');}
   }
@@ -2124,8 +2284,10 @@ const App=(function(){
   }
   async function onGenOpen(){
     const pass=$('createPass').value;const s=W.summary();
-    V.save({mnemonic:s.mnemonic,spendSec:s.spendSec,address:s.address},pass);
-    afterOpen();U.toast('Wallet created','ok');
+    if(pass){const ok=await V.save({mnemonic:s.mnemonic,spendSec:s.spendSec,address:s.address},pass);
+      if(ok)U.toast('Wallet created & vault encrypted','ok');else U.toast('Wallet created (session-only — vault not saved)','err');}
+    else{U.toast('Wallet created (session-only — set a password to persist)','info');}
+    afterOpen();
   }
   async function onViewOpen(){
     const addr=$('viewAddr').value.trim();const key=$('viewKey').value.trim();
@@ -2181,14 +2343,24 @@ const App=(function(){
   }
   function switchToWallet(id){
     const w=C3.C320.getById(id);if(!w)return;
-    try{
-      let wallet;
-      if(w.mnemonic){wallet=W.fromMnemonic(w.mnemonic);}
-      else if(w.spendSec){wallet=W.deriveFromSpendKey(w.spendSec);}
-      else{U.toast('Wallet data incomplete','err');return;}
-      W.load(wallet);state.currentWalletId=id;C3.C320.touch(id);
-      afterOpen();U.closeModal();U.toast('Switched to '+w.label,'ok');
-    }catch(e){U.toast(e.message,'err');}
+    U.closeModal();
+    U.modal('<h3>Unlock &ldquo;'+esc(w.label)+'&rdquo;</h3>'+
+      '<div class="note">Secrets are never stored on this device. Enter the 25-word seed or 64-char hex spend key to unlock. The derived address must match the saved one.</div>'+
+      '<div class="field"><label>Expected address (must match)</label><div class="code" style="word-break:break-all">'+esc(w.address)+'</div></div>'+
+      '<div class="field"><label>Seed phrase or spend key</label><textarea class="textarea" id="swSeed" placeholder="25-word mnemonic or 64-char hex spend key"></textarea></div>'+
+      '<div class="row" style="justify-content:flex-end"><button class="btn ghost" id="swCancel">Cancel</button><button class="btn primary" id="swUnlock">Unlock</button></div>',true);
+    $('swCancel').onclick=()=>U.closeModal();
+    $('swUnlock').onclick=()=>{
+      const seed=$('swSeed').value.trim();if(!seed){U.toast('Enter seed or spend key','err');return;}
+      try{
+        let wallet;
+        if(/^[0-9a-fA-F]{64}$/.test(seed.replace(/\s/g,''))){wallet=W.deriveFromSpendKey(seed.replace(/\s/g,''));}
+        else{wallet=W.fromMnemonic(seed);}
+        if(wallet.address!==w.address){U.toast('Derived address does not match this wallet — wrong seed?','err');return;}
+        W.load(wallet);state.currentWalletId=id;C3.C320.touch(id);
+        afterOpen();U.closeModal();U.toast('Switched to '+w.label,'ok');
+      }catch(e){U.toast(e.message,'err');}
+    };
   }
   function renameWallet(id){
     const w=C3.C320.getById(id);if(!w)return;
@@ -2324,7 +2496,7 @@ const App=(function(){
       '<div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn sm ghost" id="tdCopy">Copy Hash</button><button class="btn sm" id="tdExplorer">View in Explorer</button><button class="btn primary" id="tdClose">Close</button></div></div>',true);
     $('tdClose').onclick=()=>U.closeModal();
     $('tdCopy').onclick=()=>copyText(item.txHash);
-    $('tdExplorer').onclick=()=>{window.open('https://zephyrblocks.io/tx/'+item.txHash,'_blank');};
+    $('tdExplorer').onclick=()=>{window.open('https://zephyrblocks.io/tx/'+encodeURIComponent(item.txHash),'_blank','noopener,noreferrer');};
   }
   async function onScan(){
     if(!W.isLoaded()){U.toast('Open a wallet first','err');return;}
@@ -2377,20 +2549,24 @@ const App=(function(){
     const addr=$('sendAddr').value.trim();const amt=$('sendAmt').value.trim();
     if(!addr||!amt){U.toast('Enter address and amount','err');return;}
     const asset=C3.C312.currentAsset();
-    try{const bal=C3.C33.summary();const unsigned=C3.C34.buildUnsigned(W.w.spendSec,W.w.viewSec,W.w.spendPub,W.w.viewPub,addr,amt,$('sendPid').value,2,16,C3.C33.state.outputs);
-      $('txPreview').innerHTML='<div class="kv"><span class="k">Asset</span><span class="v">'+asset.symbol+'</span></div>'+
-        '<div class="kv"><span class="k">Version</span><span class="v">'+unsigned.unsigned.version+'</span></div>'+
-        '<div class="kv"><span class="k">Inputs</span><span class="v">'+unsigned.unsigned.inputs.length+'</span></div>'+
-        '<div class="kv"><span class="k">Outputs</span><span class="v">'+unsigned.unsigned.outputs.length+'</span></div>'+
-        '<div class="kv"><span class="k">Amount</span><span class="v">'+U.fmtAmt(unsigned.unsigned.outputs[0].amount)+' '+asset.symbol+'</span></div>'+
-        '<div class="kv"><span class="k">Fee est.</span><span class="v">'+U.fmtAmt(unsigned.fee)+' ZEPH</span></div>'+
-        '<div class="kv"><span class="k">Tx pubkey R</span><span class="v">'+C2.bytesHex(unsigned.txKeys.R).substr(0,24)+'…</span></div>';
-      const txHex=C3.C34.hexlify(unsigned.unsigned);
-      $('txUnsigned').value=txHex;$('txUnsignedWrap').classList.remove('hidden');
+    try{const bal=C3.C33.summary();const unsigned=C3.C34.buildUnsigned(W.w.spendSec,W.w.viewSec,W.w.spendPub,W.w.viewPub,addr,amt,$('sendPid').value,2,parseInt($('sendRing').value)||16,C3.C33.state.outputs);
+      $('txPreview').innerHTML=
+        '<div class="warn" style="margin-bottom:10px"><strong>Preview only.</strong> No RingCT/CLSAG signature is produced here, so this is NOT a broadcastable transaction.</div>'+
+        '<div class="kv"><span class="k">Asset</span><span class="v">'+asset.symbol+'</span></div>'+
+        '<div class="kv"><span class="k">Tx version</span><span class="v">'+unsigned.unsigned.version+'</span></div>'+
+        '<div class="kv"><span class="k">Inputs</span><span class="v">'+unsigned.unsigned.vin.length+'</span></div>'+
+        '<div class="kv"><span class="k">Outputs</span><span class="v">'+unsigned.unsigned.vout.length+' (recipient'+(unsigned.changeOut?' + change':'')+')</span></div>'+
+        '<div class="kv"><span class="k">Amount</span><span class="v">'+U.fmtAmt(BigInt(Math.round(parseFloat(amt)*Number(C1.NET.PICO))))+' '+asset.symbol+'</span></div>'+
+        '<div class="kv"><span class="k">Change</span><span class="v">'+U.fmtAmt(unsigned.change)+' '+asset.symbol+'</span></div>'+
+        '<div class="kv"><span class="k">Fee</span><span class="v">'+U.fmtAmt(unsigned.fee)+' '+asset.symbol+'</span></div>'+
+        '<div class="kv"><span class="k">Prefix hash</span><span class="v" style="font-size:11px">'+unsigned.prefixHash+'</span></div>'+
+        '<div class="kv"><span class="k">Tx pubkey R</span><span class="v">'+C2.bytesHex(unsigned.txKeys.R).substr(0,24)+'…</span></div>'+
+        '<div class="kv"><span class="k">Signable in-wallet?</span><span class="v" style="color:var(--red)">no — needs audited signer (C3.C328)</span></div>';
+      $('txUnsigned').value=unsigned.serializedHex;$('txUnsignedWrap').classList.remove('hidden');
       $('txRawWrap').classList.remove('hidden');
-      C3.C313.setUnsigned(txHex,unsigned);setStep(2);
-      U.logConsole('Built unsigned tx skeleton ('+txHex.length+' hex chars, asset '+asset.symbol+')','ok');
-      U.toast('Step 1 done — export the unsigned hex to cold-sign','ok');
+      C3.C313.setUnsigned(unsigned.serializedHex,unsigned);setStep(2);
+      U.logConsole('Built tx PREVIEW · prefix hash '+unsigned.prefixHash+' · '+unsigned.serializedHex.length+' hex chars · NOT signable in-wallet','warn');
+      U.toast('Preview built — NOT a valid signed tx (no audited signer)','err');
     }catch(e){U.toast(e.message,'err');}
   }
   function downloadUnsigned(){
@@ -2400,9 +2576,11 @@ const App=(function(){
     U.toast('Unsigned tx downloaded','ok');
   }
   function onLoadSigner(){
-    signerLoaded=true;U.toast('WASM signer placeholder activated','info');
-    U.logConsole('Signer module attached (monero-web WASM bridge). Real CLSAG signing requires the WASM binary.','warn');
-    $('sendNote').textContent='WASM signer attached. Build the tx then Push to sign & broadcast.';
+    signerLoaded=C3.C328.isAvailable();
+    if(signerLoaded){U.toast('Audited signer present: '+C3.C328.name(),'ok');U.logConsole('Audited signer registered: '+C3.C328.name(),'ok');return;}
+    U.toast('No signer is bundled in this monolith','err');
+    U.logConsole('SECURITY: No RingCT/CLSAG signer is bundled. To enable spending, register an independently-audited signer via C3.C328.register({name,version,signTransaction}). Until then this wallet builds previews only.','warn');
+    $('sendNote').innerHTML='<strong>Audit notice:</strong> No signer is bundled. Register an audited signer via <span class="mono">C3.C328.register()</span> to enable spending; otherwise this wallet builds previews only and cannot sign or broadcast.';
   }
   async function onPushTx(){
     const hex=$('txRaw').value.trim();if(!hex){U.toast('No tx hex','err');return;}
@@ -2444,7 +2622,7 @@ const App=(function(){
     list.querySelectorAll('[data-subqr]').forEach(b=>b.onclick=()=>openReceiveAddr(b.dataset.subqr));
   }
   function openReceiveAddr(addr){
-    U.modal('<h3>Receive</h3><div class="field"><label>Address</label><div class="code" style="word-break:break-all">'+addr+'</div></div><div class="qrwrap" id="qrBox"></div><div class="row" style="margin-top:14px;justify-content:center"><button class="btn primary" id="rcCopy">Copy Address</button><button class="btn ghost" id="rcClose">Close</button></div>',true);
+    U.modal('<h3>Receive</h3><div class="field"><label>Address</label><div class="code" style="word-break:break-all">'+esc(addr)+'</div></div><div class="qrwrap" id="qrBox"></div><div class="row" style="margin-top:14px;justify-content:center"><button class="btn primary" id="rcCopy">Copy Address</button><button class="btn ghost" id="rcClose">Close</button></div>',true);
     drawQr('qrBox',addr);
     $('rcCopy').onclick=()=>copyText(addr);$('rcClose').onclick=()=>U.closeModal();
   }
@@ -2467,8 +2645,8 @@ const App=(function(){
       '<div class="field" style="margin-top:14px"><label>Encryption password <span class="faint">(for encrypted export)</span></label><input class="input" id="bkPass" type="password" placeholder="password"></div>'+
       '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn ghost" id="bkClose">Close</button></div>',true);
     $('bkClose').onclick=()=>U.closeModal();
-    $('bcExportPlain').onclick=()=>{const sum=W.summary();const mw=state.currentWalletId?C3.C320.getById(state.currentWalletId):null;if(mw)sum.label=mw.label;const fname=C3.C318.downloadBackup(sum,null);U.toast('Plain backup downloaded: '+fname,'ok');U.logConsole('Exported plain JSON backup (with label)','ok');};
-    $('bcExportEnc').onclick=()=>{const pass=$('bkPass').value;if(!pass){U.toast('Enter a password for encrypted export','err');return;}const sum=W.summary();const mw=state.currentWalletId?C3.C320.getById(state.currentWalletId):null;if(mw)sum.label=mw.label;const fname=C3.C318.downloadBackup(sum,pass);U.toast('Encrypted backup downloaded: '+fname,'ok');U.logConsole('Exported encrypted JSON backup (with label)','ok');};
+    $('bcExportPlain').onclick=async()=>{const sum=W.summary();const mw=state.currentWalletId?C3.C320.getById(state.currentWalletId):null;if(mw)sum.label=mw.label;const fname=await C3.C318.downloadBackup(sum,null);U.toast('PLAIN backup downloaded (unencrypted!): '+fname,'err');U.logConsole('Exported PLAIN JSON backup — store offline only','warn');};
+    $('bcExportEnc').onclick=async()=>{const pass=$('bkPass').value;if(!pass){U.toast('Enter a password for encrypted export','err');return;}const sum=W.summary();const mw=state.currentWalletId?C3.C320.getById(state.currentWalletId):null;if(mw)sum.label=mw.label;try{const fname=await C3.C318.downloadBackup(sum,pass);U.toast('Encrypted backup downloaded: '+fname,'ok');U.logConsole('Exported AES-GCM encrypted backup','ok');}catch(e){U.toast('Backup failed: '+e.message,'err');}};
   }
   function openRestoreModal(){
     U.modal('<h3>Restore from Backup</h3><div class="note">Import a previously exported wallet backup JSON file. Encrypted backups require the original password.</div>'+
@@ -2496,10 +2674,10 @@ const App=(function(){
       reader.readAsText(f);
     }
     $('bkClose2').onclick=()=>U.closeModal();
-    $('bkRestore').onclick=()=>{
+    $('bkRestore').onclick=async()=>{
       if(!fileContent){U.toast('Select a backup file first','err');return;}
       try{
-        const data=C3.C318.importBackup(fileContent,$('bkPass2').value);
+        const data=await C3.C318.importBackup(fileContent,$('bkPass2').value);
         if(!data.mnemonic&&!data.spendSec)throw new Error('No wallet data in backup');
         let wallet;
         if(data.mnemonic){wallet=W.fromMnemonic(data.mnemonic);}
@@ -2533,7 +2711,7 @@ const App=(function(){
       '<div class="field"><label>Node health <span class="faint">(click Test to re-check)</span></label><div id="setHealth" class="nodelist">'+renderNodeHealth()+'</div></div>'+
       '<div class="note">All requests go directly from your browser to the chosen Zephyr daemon. No proxy, no relay, no third-party API. Public nodes may block browser CORS — add your own CORS-enabled daemon for reliable access.</div>'+
       '<div class="row" style="justify-content:flex-end"><button class="btn ghost" id="setCancel">Close</button><button class="btn" id="setTest">Test All</button><button class="btn primary" id="setSave">Save Node</button></div>',true);
-    $('setAdd').onclick=()=>{const v=$('setCustom').value.trim();if(v){S.addNode(v);openSettings();}};
+    $('setAdd').onclick=()=>{const v=$('setCustom').value.trim();if(v){if(/^http:\/\//i.test(v)&&!/\/\/(127\.0\.0\.1|localhost)([\/:]|$)/i.test(v)){U.toast('Warning: plain-HTTP node is MITM-vulnerable — prefer HTTPS or localhost','err');}S.addNode(v);openSettings();}};
     $('setCancel').onclick=()=>U.closeModal();
     $('setThemeToggle').onclick=()=>{C3.C319.toggle();openSettings();};
     $('setBackup').onclick=()=>{U.closeModal();setTimeout(openBackupModal,100);};
@@ -2562,7 +2740,7 @@ const App=(function(){
     let list=allList;
     if(query){list=allList.filter(e=>(e.label||'').toLowerCase().includes(query)||(e.address||'').toLowerCase().includes(query)||(e.note||'').toLowerCase().includes(query));}
     if(!list.length){el.innerHTML='<div class="empty2"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></div><div class="et">No matches</div><div class="es">No addresses match "'+esc(query)+'"</div></div>';return;}
-    el.innerHTML=list.map(e=>'<div class="abitem" data-abid="'+e.id+'"><div class="abicon">'+(e.label[0]||'?').toUpperCase()+'</div><div class="ab-addr-wrap"><div class="al">'+esc(e.label)+(e.note?' <span class="faint" style="font-weight:400">· '+esc(e.note)+'</span>':'')+'</div><div class="ab-trunc-addr">'+e.address+'</div><div class="ab-full-addr">'+e.address+'</div></div><div class="abacts"><button class="btn sm" data-ab-send="'+e.id+'" title="Send to this address">Send</button><button class="btn sm ghost" data-ab-qr="'+e.id+'" title="Show QR"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h7v7"/></svg></button><button class="btn sm ghost" data-ab-copy="'+e.id+'" title="Copy">Copy</button><button class="btn sm danger" data-ab-rm="'+e.id+'" title="Remove">×</button></div></div>').join('')+(query?'<div class="abcount">Showing '+list.length+' of '+allList.length+' addresses</div>':'');
+    el.innerHTML=list.map(e=>'<div class="abitem" data-abid="'+e.id+'"><div class="abicon">'+(e.label[0]||'?').toUpperCase()+'</div><div class="ab-addr-wrap"><div class="al">'+esc(e.label)+(e.note?' <span class="faint" style="font-weight:400">· '+esc(e.note)+'</span>':'')+'</div><div class="ab-trunc-addr">'+esc(e.address)+'</div><div class="ab-full-addr">'+esc(e.address)+'</div></div><div class="abacts"><button class="btn sm" data-ab-send="'+e.id+'" title="Send to this address">Send</button><button class="btn sm ghost" data-ab-qr="'+e.id+'" title="Show QR"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h7v7"/></svg></button><button class="btn sm ghost" data-ab-copy="'+e.id+'" title="Copy">Copy</button><button class="btn sm danger" data-ab-rm="'+e.id+'" title="Remove">×</button></div></div>').join('')+(query?'<div class="abcount">Showing '+list.length+' of '+allList.length+' addresses</div>':'');
     el.querySelectorAll('[data-abid]').forEach(item=>{item.querySelector('.ab-trunc-addr').onclick=()=>item.classList.toggle('expanded');item.querySelector('.ab-full-addr').onclick=()=>item.classList.toggle('expanded');});
     el.querySelectorAll('[data-ab-send]').forEach(b=>b.onclick=()=>{const e=allList.find(x=>x.id===b.dataset.abSend);if(e){$('sendAddr').value=e.address;switchTab('send');U.closeModal();U.toast('Loaded into Send form','info');}});
     el.querySelectorAll('[data-ab-qr]').forEach(b=>b.onclick=()=>{const e=allList.find(x=>x.id===b.dataset.abQr);if(e)openReceiveAddr(e.address);});
@@ -2663,13 +2841,13 @@ const App=(function(){
     prefill=prefill||{};
     U.modal('<h3>Add to Address Book</h3><div class="field"><label>Label</label><input class="input" id="abLabel" placeholder="e.g. Exchange deposit" value="'+esc(prefill.label||'')+'"></div><div class="field"><label>Address</label><input class="input" id="abAddress" placeholder="ZEPHYR..." value="'+esc(prefill.address||'')+'"></div><div class="field"><label>Note <span class="faint">(optional)</span></label><input class="input" id="abNote" placeholder="optional note"></div><div class="row" style="justify-content:flex-end"><button class="btn ghost" id="abCancel">Cancel</button><button class="btn primary" id="abSave">Save</button></div>',true);
     $('abCancel').onclick=()=>U.closeModal();
-    $('abSave').onclick=()=>{const label=$('abLabel').value.trim();const addr=$('abAddress').value.trim();const note=$('abNote').value.trim();if(!addr){U.toast('Address required','err');return;}const ok=C3.C311.add(label,addr,note);if(!ok){U.toast('Address already exists','err');return;}U.closeModal();renderAddressBook();U.toast('Saved to address book','ok');};
+    $('abSave').onclick=()=>{const label=$('abLabel').value.trim();const addr=$('abAddress').value.trim();const note=$('abNote').value.trim();if(!addr){U.toast('Address required','err');return;}const ok=C3.C311.add(label,addr,note);if(!ok){U.toast('Invalid or duplicate address','err');return;}U.closeModal();renderAddressBook();U.toast('Saved to address book','ok');};
   }
   function addCurrentToBook(){if(!W.isLoaded()){U.toast('Open a wallet first','err');return;}openAddBookModal({address:W.summary().address,label:'My wallet'});}
   function openSendFromBook(){
     const list=C3.C311.load();
     if(!list.length){U.toast('Address book is empty','err');return;}
-    U.modal('<h3>Pick from Address Book</h3><div class="scrolllist" style="max-height:360px">'+list.map(e=>'<div class="abitem" style="cursor:pointer" data-pick="'+e.id+'"><div class="abicon">'+(e.label[0]||'?').toUpperCase()+'</div><div class="abmeta"><div class="al">'+esc(e.label)+'</div><div class="aa">'+e.address+'</div></div></div>').join('')+'</div><div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn ghost" id="pickCancel">Cancel</button></div>',true);
+    U.modal('<h3>Pick from Address Book</h3><div class="scrolllist" style="max-height:360px">'+list.map(e=>'<div class="abitem" style="cursor:pointer" data-pick="'+e.id+'"><div class="abicon">'+(e.label[0]||'?').toUpperCase()+'</div><div class="abmeta"><div class="al">'+esc(e.label)+'</div><div class="aa">'+esc(e.address)+'</div></div></div>').join('')+'</div><div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn ghost" id="pickCancel">Cancel</button></div>',true);
     $('pickCancel').onclick=()=>U.closeModal();
     document.querySelectorAll('[data-pick]').forEach(el=>el.onclick=()=>{const e=list.find(x=>x.id===el.dataset.pick);if(e){$('sendAddr').value=e.address;U.closeModal();U.toast('Loaded '+e.label,'info');}});
   }
@@ -2689,7 +2867,7 @@ const App=(function(){
     if(cnt)cnt.textContent=sum.count;
     if(persist)persist.style.display=sum.count?'inline-flex':'none';
     if(!sum.count){if(list)list.innerHTML='<div class="tq-empty">Queue is empty. Add a recipient below.</div>';return;}
-    if(list)list.innerHTML=sum.list.map(q=>'<div class="tq-item"><span class="tq-addr">'+q.addr+'</span><span class="tq-amt">'+parseFloat(q.amount).toFixed(6)+' ZEPH</span><button class="tq-rm" data-qrm="'+q.id+'">×</button></div>').join('');
+    if(list)list.innerHTML=sum.list.map(q=>'<div class="tq-item"><span class="tq-addr">'+esc(q.addr)+'</span><span class="tq-amt">'+parseFloat(q.amount).toFixed(6)+' ZEPH</span><button class="tq-rm" data-qrm="'+q.id+'">×</button></div>').join('');
     list.querySelectorAll('[data-qrm]').forEach(b=>b.onclick=()=>{C3.C323.remove(b.dataset.qrm);renderTxQueue();});
   }
   async function onQueueBuild(){
@@ -2701,7 +2879,7 @@ const App=(function(){
     for(const q of sum.list){
       try{
         const unsigned=C3.C34.buildUnsigned(W.w.spendSec,W.w.viewSec,W.w.spendPub,W.w.viewPub,q.addr,q.amount,'',2,16,C3.C33.state.outputs);
-        const hex=C3.C34.hexlify(unsigned.unsigned);
+        const hex=unsigned.serializedHex;
         results.push({addr:q.addr,amount:q.amount,hex:hex,status:'built'});
         built++;
       }catch(e){failed++;results.push({addr:q.addr,amount:q.amount,error:e.message,status:'failed'});}
@@ -2715,11 +2893,11 @@ const App=(function(){
     $('batchClose').onclick=()=>U.closeModal();
     U.toast('Batch built: '+built+'/'+sum.count,'ok');
   }
-  function copyText(t){if(!t)return;navigator.clipboard.writeText(t).then(()=>U.toast('Copied','ok')).catch(()=>U.toast('Copy failed','err'));}
+  function copyText(t,secret){if(!t)return;navigator.clipboard.writeText(t).then(()=>{U.toast(secret?'Copied — clipboard auto-clears in 25s':'Copied','ok');if(secret){setTimeout(()=>{navigator.clipboard.writeText('').catch(function(){});},25000);}}).catch(()=>U.toast('Copy failed','err'));}
   return{init:init,refreshAll:refreshAll,renderAddressBook:renderAddressBook};
 })();
 
 document.addEventListener('DOMContentLoaded',App.init);
 </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a1da657e3c6142c6',t:'MTc4NDQ3MTEzNg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
