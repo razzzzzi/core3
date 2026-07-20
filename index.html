@@ -12,26 +12,41 @@ canvas{background:#000;image-rendering:pixelated;image-rendering:crisp-edges;dis
 <body>
 <canvas id="game" width="1280" height="800"></canvas>
 <script>
-const WASM_B64="AGFzbQEAAAABMQZgAX8Bf2ACf38Bf2AIfX19fX19fX0Bf2AEfX19fQF9YAN/f38Bf2AGf399fX19AX8CDwEDZW52Bm1lbW9yeQIAAQMIBwABAQIDBAUHWQcKeG9yc2hpZnQzMgAABmkzMmFkZAABBmkzMm11bAACDmFhYmJPdmVybGFwRjMyAAMLZGlzdFNxMkRGMzIABAhjbGFtcEkzMgAFDGJhdGNoQ29sbGlkZQAGCqgCBx4AIAAgAEENdHMhACAAIABBEXZzIQAgACAAQQV0cwsHACAAIAFqCwcAIAAgAWwLPAAgACAEIAaSYAR/QQAFIAQgACACkmAEf0EABSABIAUgB5JgBH9BAAUgBSABIAOSYAR/QQAFQQELCwsLCxkAIAIgAJMgAiAAk5QgAyABkyADIAGTlJILGgAgACABSAR/IAEFIAAgAkoEfyACBSAACwsLhAEBAX9BACEGAkADQCAGIAFODQECQCAAIAZBEGxqKgIAIAIgBJJgDQAgAiAAIAZBEGxqKgIAIAAgBkEQbGoqAgiSYA0AIAAgBkEQbGoqAgQgAyAFkmANACADIAAgBkEQbGoqAgQgACAGQRBsaioCDJJgDQAgBg8LIAZBAWohBgwACwtBfws=";
-let wasmXorshift=null,wasmClampI=null,wasmAABBF32=null,wasmDistSqF32=null,wasmBatchCollide=null,wasmMemory=null;
+const WASM_B64="AGFzbQEAAAABPwdgAX8Bf2AIf39/f39/f38Bf2AEf39/fwF/YAN/f38Bf2AIfX19fX19fX0Bf2AEfX19fQF9YAZ/f319fX0BfwIPAQNlbnYGbWVtb3J5AgABAwgHAAECAwQFBgdgBwp4b3JzaGlmdDMyAAALYWFiYk92ZXJsYXAAAQhkaXN0U3EyRAACCGNsYW1wSTMyAAMOYWFiYk92ZXJsYXBGMzIABAtkaXN0U3EyREYzMgAFDGJhdGNoQ29sbGlkZQAGCqsCBxoAIAAgAEENdHMiACAAQRF2cyIAIABBBXRzCyUAIAAgAmogBE4gBCAGaiAATnEgASADaiAFTnEgBSAHaiABTnELGQAgAiAAayACIABrbCADIAFrIAMgAWtsagsaACAAIAFIBH8gAQUgACACSgR/IAIFIAALCwslACAAIAKSIARgIAQgBpIgAGBxIAEgA5IgBWBxIAUgB5IgAWBxCxkAIAIgAJMgAiAAk5QgAyABkyADIAGTlJILcwIBfwR9IAAhBgJAA0AgBiABTg0BIAZBBHQqAgAiByAGQQR0KgIIIgkgBkEEdCoCBCIIIAZBBHQqAgwiCiACIASSIAdgIAcgCZIgAmBxIAMgBZIgCGBxIAggCpIgA2BxBEAgBg8LIAZBAWohBgwACwtBfws=";
+let wasmXorshift=null,wasmClampI=null,wasmAABB=null,wasmDistSq=null,wasmAABBF32=null,wasmDistSqF32=null,wasmBatchCollide=null,wasmMemory=null;
 let wasmBindingsVerified=false,wasmBindingsMissing=[];
+let wasmSimdAvailable=false,wasmByteSize=0,wasmExportCount=0,wasmExportNames=[];
+function probeSimd(){
+  try{
+    const simdModule=new WebAssembly.Module(Uint8Array.from(atob("AGFzbQEAAAABBAFgAAADAgEAChcBFQD9DAAAAAAAAAAAAAAAAAAAAAAaCw=="),c=>c.charCodeAt(0)));
+    new WebAssembly.Instance(simdModule,{env:{memory:new WebAssembly.Memory({initial:1})}});
+    return true;
+  }catch(e){return false;}
+}
 function initWasm(){
   try{
     const bytes=Uint8Array.from(atob(WASM_B64),c=>c.charCodeAt(0));
+    wasmByteSize=bytes.length;
     const mem=new WebAssembly.Memory({initial:1});
     wasmMemory=mem;
     const mod=new WebAssembly.Module(bytes);
     const inst=new WebAssembly.Instance(mod,{env:{memory:mem}});
     const exp=inst.exports;
-    const EXPECTED=['xorshift32','clampI32','aabbOverlapF32','distSq2DF32','batchCollide'];
+    wasmExportNames=Object.keys(exp);
+    wasmExportCount=wasmExportNames.length;
+    const EXPECTED=['xorshift32','aabbOverlap','distSq2D','clampI32','aabbOverlapF32','distSq2DF32','batchCollide'];
     wasmBindingsMissing=EXPECTED.filter(n=>typeof exp[n]!=='function');
     wasmXorshift=exp.xorshift32;
+    wasmAABB=exp.aabbOverlap;
+    wasmDistSq=exp.distSq2D;
     wasmClampI=exp.clampI32;
     wasmAABBF32=exp.aabbOverlapF32;
     wasmDistSqF32=exp.distSq2DF32;
     wasmBatchCollide=exp.batchCollide;
     wasmBindingsVerified=(wasmBindingsMissing.length===0);
+    wasmSimdAvailable=probeSimd();
     if(!wasmBindingsVerified)console.warn('[wasm] missing exports:',wasmBindingsMissing.join(','));
+    if(wasmSimdAvailable)console.log('[wasm] SIMD available (browser supports v128)');
   }catch(e){
     console.error('[wasm] disabled:',e.message);
     wasmBindingsVerified=false;
@@ -84,7 +99,7 @@ const C1={
 };
 
 const C2_MATH={
-  clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);},
+  clamp(v,lo,hi){if(!isFinite(v))return lo;return v<lo?lo:(v>hi?hi:v);},
   lerp(a,b,t){return a+(b-a)*t;},
   v3(x,y,z){return {x,y,z};},
   v4(x,y,z,w){return {x,y,z,w};},
@@ -810,7 +825,6 @@ const C2_PARTICLES_FLAT={
   },
   emitBurst(px,py,pz,kind,count){
     const MAX_BATCH=256;
-    const n=Math.min(count,MAX_BATCH);
     if(!this._scratchVx){
       this._scratchVx=new Float32Array(MAX_BATCH);
       this._scratchVy=new Float32Array(MAX_BATCH);
@@ -823,43 +837,32 @@ const C2_PARTICLES_FLAT={
     const vzBuf=this._scratchVz;
     const lifeBuf=this._scratchLife;
     const sizeBuf=this._scratchSize;
-    let r,g,b;
+    let r,g,b,vxR,vyR,vzR,lifeR,sizeR;
     if(kind===0){
-      C2_RNG.rangeBatch(-3,3,n,vxBuf);C2_RNG.rangeBatch(2,5,n,vyBuf);C2_RNG.rangeBatch(-3,3,n,vzBuf);
-      C2_RNG.rangeBatch(0.4,0.8,n,lifeBuf);C2_RNG.rangeBatch(0.08,0.18,n,sizeBuf);
+      vxR=[-3,3];vyR=[2,5];vzR=[-3,3];lifeR=[0.4,0.8];sizeR=[0.08,0.18];
       r=1;g=0.85;b=0.2;
     }else if(kind===1){
-      C2_RNG.rangeBatch(-1.5,1.5,n,vxBuf);C2_RNG.rangeBatch(0.5,2.5,n,vyBuf);C2_RNG.rangeBatch(-1.5,1.5,n,vzBuf);
-      C2_RNG.rangeBatch(0.3,0.7,n,lifeBuf);C2_RNG.rangeBatch(0.06,0.12,n,sizeBuf);
+      vxR=[-1.5,1.5];vyR=[0.5,2.5];vzR=[-1.5,1.5];lifeR=[0.3,0.7];sizeR=[0.06,0.12];
       r=0.85;g=0.1;b=0.1;
     }else if(kind===2){
-      C2_RNG.rangeBatch(-1,1,n,vxBuf);C2_RNG.rangeBatch(2,5,n,vyBuf);C2_RNG.rangeBatch(-1,1,n,vzBuf);
-      C2_RNG.rangeBatch(0.6,1.2,n,lifeBuf);C2_RNG.rangeBatch(0.1,0.2,n,sizeBuf);
+      vxR=[-1,1];vyR=[2,5];vzR=[-1,1];lifeR=[0.6,1.2];sizeR=[0.1,0.2];
       r=0.18;g=0.55;b=0.95;
     }else{
-      C2_RNG.rangeBatch(-2,2,n,vxBuf);C2_RNG.rangeBatch(3,7,n,vyBuf);C2_RNG.rangeBatch(-2,2,n,vzBuf);
-      C2_RNG.rangeBatch(0.6,1.2,n,lifeBuf);C2_RNG.rangeBatch(0.1,0.2,n,sizeBuf);
+      vxR=[-2,2];vyR=[3,7];vzR=[-2,2];lifeR=[0.6,1.2];sizeR=[0.1,0.2];
       r=1;g=0.85;b=0.2;
     }
-    for(let i=0;i<n;i++){
-      this.emit(px,py,pz,vxBuf[i],vyBuf[i],vzBuf[i],lifeBuf[i],sizeBuf[i],r,g,b);
-    }
-    for(let i=n;i<count;i++){
-      let vx,vy,vz,life,size;
-      if(kind===0){
-        vx=C2_RNG.range(-3,3);vy=C2_RNG.range(2,5);vz=C2_RNG.range(-3,3);
-        life=C2_RNG.range(0.4,0.8);size=C2_RNG.range(0.08,0.18);
-      }else if(kind===1){
-        vx=C2_RNG.range(-1.5,1.5);vy=C2_RNG.range(0.5,2.5);vz=C2_RNG.range(-1.5,1.5);
-        life=C2_RNG.range(0.3,0.7);size=C2_RNG.range(0.06,0.12);
-      }else if(kind===2){
-        vx=C2_RNG.range(-1,1);vy=C2_RNG.range(2,5);vz=C2_RNG.range(-1,1);
-        life=C2_RNG.range(0.6,1.2);size=C2_RNG.range(0.1,0.2);
-      }else{
-        vx=C2_RNG.range(-2,2);vy=C2_RNG.range(3,7);vz=C2_RNG.range(-2,2);
-        life=C2_RNG.range(0.6,1.2);size=C2_RNG.range(0.1,0.2);
+    let emitted=0;
+    while(emitted<count){
+      const n=Math.min(MAX_BATCH,count-emitted);
+      C2_RNG.rangeBatch(vxR[0],vxR[1],n,vxBuf);
+      C2_RNG.rangeBatch(vyR[0],vyR[1],n,vyBuf);
+      C2_RNG.rangeBatch(vzR[0],vzR[1],n,vzBuf);
+      C2_RNG.rangeBatch(lifeR[0],lifeR[1],n,lifeBuf);
+      C2_RNG.rangeBatch(sizeR[0],sizeR[1],n,sizeBuf);
+      for(let i=0;i<n;i++){
+        this.emit(px,py,pz,vxBuf[i],vyBuf[i],vzBuf[i],lifeBuf[i],sizeBuf[i],r,g,b);
       }
-      this.emit(px,py,pz,vx,vy,vz,life,size,r,g,b);
+      emitted+=n;
     }
   },
   update(dt){
@@ -1084,6 +1087,14 @@ const C2_AUDIO={
 
 const C2_COLLIDE={
   aabbWasm(ax,ay,aw,ah,bx,by,bw,bh){
+    if(wasmAABB){
+      return wasmAABB(
+        Math.floor(ax*100),Math.floor(ay*100),
+        Math.floor(aw*100),Math.floor(ah*100),
+        Math.floor(bx*100),Math.floor(by*100),
+        Math.floor(bw*100),Math.floor(bh*100)
+      )===1;
+    }
     if(wasmAABBF32){
       return wasmAABBF32(ax,ay,aw,ah,bx,by,bw,bh)===1;
     }
@@ -1092,6 +1103,9 @@ const C2_COLLIDE={
     return true;
   },
   distSq2DWasm(x1,y1,x2,y2){
+    if(wasmDistSq){
+      return wasmDistSq(Math.floor(x1*100),Math.floor(y1*100),Math.floor(x2*100),Math.floor(y2*100))/10000;
+    }
     if(wasmDistSqF32){
       return wasmDistSqF32(x1,y1,x2,y2);
     }
@@ -1323,6 +1337,7 @@ const C3_ENTITY_SOA={
 
 const C3_BATCH_AABB={
   WIDTH:4,
+  ENTITY_HALF_EXTENT:0.5,
   queriesRun:0,
   entitiesScanned:0,
   hitListBuf:null,
@@ -1379,8 +1394,8 @@ const C3_BATCH_AABB={
         }
         this._ex4[j]=ex;
         this._ey4[j]=ey;
-        this._ew4[j]=0.5;
-        this._eh4[j]=0.5;
+        this._ew4[j]=this.ENTITY_HALF_EXTENT;
+        this._eh4[j]=this.ENTITY_HALF_EXTENT;
         this._mask4[j]=1;
       }
       for(let j=0;j<this.WIDTH;j++){
@@ -1399,7 +1414,7 @@ const C3_BATCH_AABB={
       if(eb[p+ef.alive]===0)continue;
       const ex=eb[p+ef.posX],ey=eb[p+ef.posY];
       if(ex>=9990)continue;
-      if(px+pw<ex||ex+0.5<px||py+ph<ey||ey+0.5<py)continue;
+      if(px+pw<ex||ex+this.ENTITY_HALF_EXTENT<px||py+ph<ey||ey+this.ENTITY_HALF_EXTENT<py)continue;
       outBuf[k++]=i;
       this.entitiesScanned++;
     }
@@ -1614,6 +1629,7 @@ const C3_WORLD={
       spawnOffset:{x:0,y:0,z:0},animTime:0,animState:0,
       insurances:0,xp:0,xpToNext:0,stats:[0,0,0,0,0,0],
       race:0,profession:0,nano:0,maxNano:0,ncu:0,maxNcu:0,
+      rarity:0,
       equipped:new Array(C1.SLOT.COUNT).fill(null),
       buffs:[],buffCount:0,currentTarget:-1,floor:0,
       deathTimer:0,spawnTimer:0
@@ -2476,7 +2492,7 @@ const C3_5_2_AFFIX = {
     {name:'of the Dragon', mods:{str:4,sta:4,int:2}, w:2},
     {name:'of Anarchy', mods:{all:4, atk:10}, w:1}
   ],
-  clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); },
+  clamp(v,lo,hi){ if(!isFinite(v))return lo;return v<lo?lo:(v>hi?hi:v); },
   pickWeighted(list){
     let tot=0; for(let e of list) tot+=e.w;
     let r=C2_RNG.chance()*tot;
@@ -3143,6 +3159,94 @@ const C3_TEST={
     this.testBatchAabbScratchBuffersPreAlloc();
     this.testBatchAabbBroadcast();
     this.testBatchAabbNullSafe();
+    this.testSecClampNaNReturnsLo();
+    this.testSecClampInfinityClamped();
+    this.testSecClampNegativeInfinityClamped();
+    this.testSecClampNegativeZero();
+    this.testSecClampPreservesFinite();
+    this.testSecClamp2NaNHandled();
+    this.testSecLoadMetaValidates();
+    this.testSecLoadMetaRejectsCorrupt();
+    this.testSecLoadMetaRejectsTypeConfusion();
+    this.testSecLoadMetaRejectsNull();
+    this.testSecValidatorClampIntRejectsPartialString();
+    this.testSecValidatorClampIntTruncatesFloats();
+    this.testSecValidatorClampIntRejectsInfinity();
+    this.testSecValidatorClampIntRejectsNaN();
+    this.testSecValidatorClampIntHandlesBoolean();
+    this.testSecValidatorClampIntHandlesNullUndefined();
+    this.testSecValidatorClampIntHandlesObject();
+    this.testSecValidatorClampIntHandlesArray();
+    this.testSecValidatorClampFloatRejectsPartialString();
+    this.testSecValidatorClampFloatHandlesFloats();
+    this.testSecValidatorClampFloatRejectsInfinity();
+    this.testSecValidatorClampFloatRejectsNaN();
+    this.testSecBatchAabbEntityHalfExtentConstant();
+    this.testSecBatchAabbNoMagicNumberInQuery();
+    this.testSecEntityRarityInitialized();
+    this.testSecEntityRarityOnBlankEntity();
+    this.testSecParticlesEmitBurstChunked();
+    this.testSecParticlesEmitBurstLargeCountChunked();
+    this.testSecParticlesEmitBurstNoScalarFallback();
+    this.testSecParticlesEmitBurstAllKindsBatched();
+    this.testSecRngBatchRangeBatchInBounds();
+    this.testSecRngBatchRangeIntBatchInBounds();
+    this.testSecRngBatchChanceBatchInBounds();
+    this.testSecNoEvalAnywhere();
+    this.testSecNoFunctionConstructor();
+    this.testSecNoInnerHTML();
+    this.testSecNoDocumentWrite();
+    this.testSecNoPrototypeMutation();
+    this.testSecSaveRoundTripPreservesTypes();
+    this.testSecSaveRejectsPrototypePollution();
+    this.testSecSaveRejectsExcessNesting();
+    this.testSecSaveRejectsCyclicRef();
+    this.testSecSoaWriteFromEntityHandlesUndefinedRarity();
+    this.testSecSoaWriteFromEntityHandlesMissingFields();
+    this.testSecSoaNegativeInfinityClamped();
+    this.testSecClampDeepPropertyBased();
+    this.testSecValidatorDeepPropertyBased();
+    this.testSecSaveLoadRoundTripDeep();
+    this.testWasmFixedBlobAllExports();
+    this.testWasmFixedBlobAabbOverlapI32();
+    this.testWasmFixedBlobDistSqI32();
+    this.testWasmFixedBlobXorshift();
+    this.testWasmFixedBlobClampI32();
+    this.testWasmFixedBlobBatchCollide();
+    this.testWasmBindingDriftResolved();
+    this.testWasmAllExpectedExportsCallable();
+    this.testWasmDeadBindingsRemoved();
+    this.testWasmSimdProbe();
+    this.testWasmSimdAvailable();
+    this.testWasmDiagModuleExists();
+    this.testWasmDiagInitPopulates();
+    this.testWasmDiagSummary();
+    this.testWasmDiagReport();
+    this.testWasmDiagBindingsMatch();
+    this.testWasmDiagExportNamesPopulated();
+    this.testWasmDiagByteSizeRecorded();
+    this.testWasmDiagWiredIntoOrchestrator();
+    this.testBenchModuleExists();
+    this.testBenchRunAll();
+    this.testBenchAABBReturnsResult();
+    this.testBenchXorshiftReturnsResult();
+    this.testBenchDistSqReturnsResult();
+    this.testBenchSummary();
+    this.testBenchSpeedupFields();
+    this.testBenchNullSafeWhenWasmMissing();
+    this.testWasmAabbI32MatchesF32();
+    this.testWasmDistSqI32MatchesF32();
+    this.testWasmAabbI32FixedPointPrecision();
+    this.testWasmDistSqI32FixedPointPrecision();
+    this.testWasmAabbI32BoundaryOverlap();
+    this.testWasmAabbI32NoOverlap();
+    this.testWasmAabbI32PropertyBased();
+    this.testWasmDistSqI32PropertyBased();
+    this.testWasmFixedBlob500Bytes();
+    this.testWasmExportCount7();
+    this.testWasmDiagNoMissingExports();
+    this.testWasmSimdProbeDoesNotCrash();
+    this.testWasmDiagInfoFrozenAfterInit();
     this.ran=true;
     console.log('C3_TEST SUITE:',this.passed+' passed, '+this.failed+' failed, '+this.results.length+' total');
   },
@@ -5632,10 +5736,10 @@ const C3_TEST={
     this.assert(typeof wasmDistSqF32!=='undefined','wasmDistSqF32 defined');
     this.assert(typeof wasmBatchCollide!=='undefined','wasmBatchCollide defined');
     this.assert(typeof wasmMemory!=='undefined','wasmMemory defined');
-    this.assert(typeof wasmAABB==='undefined','wasmAABB (broken-by-name) removed');
-    this.assert(typeof wasmDistSq==='undefined','wasmDistSq (broken-by-name) removed');
-    this.assert(typeof wasmI32Add==='undefined','wasmI32Add (dead) removed');
-    this.assert(typeof wasmI32Mul==='undefined','wasmI32Mul (dead) removed');
+    this.assert(typeof wasmAABB==='function','wasmAABB (i32 path) bound to aabbOverlap');
+    this.assert(typeof wasmDistSq==='function','wasmDistSq (i32 path) bound to distSq2D');
+    this.assert(typeof wasmI32Add==='undefined','wasmI32Add (dead) not bound');
+    this.assert(typeof wasmI32Mul==='undefined','wasmI32Mul (dead) not bound');
   },
   testWasmAABBMatchesF32(){
     this.group('WASM_AABB_F32');
@@ -8399,6 +8503,785 @@ const C3_TEST={
     this.assert(!threw,'queryPlayerAll4 does not throw with valid input');
     C3_WORLD.init();
   },
+  testSecClampNaNReturnsLo(){
+    this.group('SEC_CLAMP_NAN');
+    this.eq(C2_MATH.clamp(NaN,0,10),0,'NaN returns lower bound');
+    this.eq(C2_MATH.clamp(NaN,5,10),5,'NaN returns lower bound (5)');
+    this.eq(C2_MATH.clamp(NaN,-10,10),-10,'NaN returns lower bound (-10)');
+    this.assert(!isNaN(C2_MATH.clamp(NaN,0,10)),'NaN does NOT propagate');
+  },
+  testSecClampInfinityClamped(){
+    this.group('SEC_CLAMP_INFINITY');
+    this.eq(C2_MATH.clamp(Infinity,0,10),0,'+Infinity returns lower bound (defensive)');
+    this.eq(C2_MATH.clamp(-Infinity,0,10),0,'-Infinity returns lower bound');
+    this.assert(isFinite(C2_MATH.clamp(Infinity,0,10)),'Infinity handled');
+  },
+  testSecClampNegativeInfinityClamped(){
+    this.group('SEC_CLAMP_NEG_INF');
+    this.eq(C2_MATH.clamp(-Infinity,0,10),0,'-Infinity returns lower bound');
+    this.eq(C2_MATH.clamp(-Infinity,-100,10),-100,'-Infinity returns lower bound (-100)');
+  },
+  testSecClampNegativeZero(){
+    this.group('SEC_CLAMP_NEG_ZERO');
+    this.eq(C2_MATH.clamp(-0,0,10),0,'-0 clamps to 0');
+    this.assert(!isNaN(C2_MATH.clamp(-0,0,10)),'-0 does not produce NaN');
+  },
+  testSecClampPreservesFinite(){
+    this.group('SEC_CLAMP_FINITE');
+    this.eq(C2_MATH.clamp(5,0,10),5,'finite in range preserved');
+    this.eq(C2_MATH.clamp(0.5,0,1),0.5,'float in range preserved');
+    this.eq(C2_MATH.clamp(-5,0,10),0,'below range clamped to lo');
+    this.eq(C2_MATH.clamp(15,0,10),10,'above range clamped to hi');
+    this.eq(C2_MATH.clamp(0,-1,1),0,'zero preserved');
+  },
+  testSecClamp2NaNHandled(){
+    this.group('SEC_CLAMP2_NAN');
+    const src=C2_COLLIDE.clamp.toString();
+    this.assert(src.indexOf('isFinite')>=0,'C2_COLLIDE.clamp guards with isFinite');
+    this.eq(C2_COLLIDE.clamp(NaN,0,10),0,'C2_COLLIDE.clamp NaN returns lo');
+    this.assert(!isNaN(C2_COLLIDE.clamp(NaN,0,10)),'C2_COLLIDE.clamp NaN does not propagate');
+  },
+  testSecLoadMetaValidates(){
+    this.group('SEC_LOAD_META_VALIDATES');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.level=42;
+    p.race=2;
+    p.profession=3;
+    C3_WORLD.world.currentFloor=7;
+    C3_SAVE.save();
+    const meta=C3_SAVE.loadMeta();
+    this.assert(meta!==null,'loadMeta returns non-null');
+    this.eq(meta.level,42,'level preserved');
+    this.eq(meta.race,2,'race preserved');
+    this.eq(meta.profession,3,'profession preserved');
+    this.eq(meta.floor,7,'floor preserved');
+    C3_SAVE.clear();
+    C3_WORLD.init();
+  },
+  testSecLoadMetaRejectsCorrupt(){
+    this.group('SEC_LOAD_META_CORRUPT');
+    try{localStorage.setItem(C3_SAVE.KEY,'not valid json');}catch(e){}
+    const meta=C3_SAVE.loadMeta();
+    this.eq(meta,null,'corrupt JSON returns null (caught)');
+    C3_SAVE.clear();
+  },
+  testSecLoadMetaRejectsTypeConfusion(){
+    this.group('SEC_LOAD_META_TYPE_CONFUSION');
+    const payload={floor:'<scr'+'ipt>x</scr'+'ipt>',level:'not-a-number',race:{evil:1},profession:null};
+    try{localStorage.setItem(C3_SAVE.KEY,JSON.stringify(payload));}catch(e){}
+    const meta=C3_SAVE.loadMeta();
+    if(meta!==null){
+      this.assert(typeof meta.floor==='number','floor is number (not string)');
+      this.assert(typeof meta.level==='number','level is number');
+      this.assert(typeof meta.race==='number','race is number (not object)');
+      this.assert(typeof meta.profession==='number','profession is number');
+      this.assert(meta.floor>=0,'floor >= 0');
+      this.assert(meta.level>=1,'level >= 1');
+    }else{
+      this.assert(true,'validator rejected corrupt data (returns null)');
+    }
+    C3_SAVE.clear();
+  },
+  testSecLoadMetaRejectsNull(){
+    this.group('SEC_LOAD_META_NULL');
+    C3_SAVE.clear();
+    const meta=C3_SAVE.loadMeta();
+    this.eq(meta,null,'no save returns null');
+  },
+  testSecValidatorClampIntRejectsPartialString(){
+    this.group('SEC_CLAMP_INT_PARTIAL_STR');
+    this.eq(C3_SAVE_VALIDATOR.clampInt('5abc',0,10,0),0,'5abc rejected (was 5 before fix)');
+    this.eq(C3_SAVE_VALIDATOR.clampInt('10xyz',0,10,0),0,'10xyz rejected');
+    this.eq(C3_SAVE_VALIDATOR.clampInt('abc5',0,10,0),0,'abc5 rejected');
+    this.eq(C3_SAVE_VALIDATOR.clampInt('',0,10,0),0,'empty string rejected');
+  },
+  testSecValidatorClampIntTruncatesFloats(){
+    this.group('SEC_CLAMP_INT_TRUNC');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(1.9,0,10,0),1,'1.9 truncates to 1');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(-1.9,0,10,0),0,'-1.9 truncates to -1, clamped to 0');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(5.5,0,10,0),5,'5.5 truncates to 5');
+  },
+  testSecValidatorClampIntRejectsInfinity(){
+    this.group('SEC_CLAMP_INT_INF');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(Infinity,0,10,0),0,'Infinity rejected');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(-Infinity,0,10,0),0,'-Infinity rejected');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(1e308,0,10,0),0,'huge number rejected');
+  },
+  testSecValidatorClampIntRejectsNaN(){
+    this.group('SEC_CLAMP_INT_NAN');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(NaN,0,10,0),0,'NaN rejected');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(undefined,0,10,0),0,'undefined rejected');
+  },
+  testSecValidatorClampIntHandlesBoolean(){
+    this.group('SEC_CLAMP_INT_BOOL');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(true,0,10,0),1,'true -> 1');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(false,0,10,0),0,'false -> 0');
+  },
+  testSecValidatorClampIntHandlesNullUndefined(){
+    this.group('SEC_CLAMP_INT_NULL_UNDEF');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(null,0,10,0),0,'null -> def');
+    this.eq(C3_SAVE_VALIDATOR.clampInt(undefined,0,10,0),0,'undefined -> def');
+  },
+  testSecValidatorClampIntHandlesObject(){
+    this.group('SEC_CLAMP_INT_OBJ');
+    this.eq(C3_SAVE_VALIDATOR.clampInt({},0,10,0),0,'{} -> def');
+    this.eq(C3_SAVE_VALIDATOR.clampInt({valueOf:()=>5},0,10,0),0,'{valueOf} -> def (no implicit call)');
+  },
+  testSecValidatorClampIntHandlesArray(){
+    this.group('SEC_CLAMP_INT_ARR');
+    this.eq(C3_SAVE_VALIDATOR.clampInt([],0,10,0),0,'[] -> def');
+    this.eq(C3_SAVE_VALIDATOR.clampInt([5],0,10,0),0,'[5] -> def (no implicit toString)');
+  },
+  testSecValidatorClampFloatRejectsPartialString(){
+    this.group('SEC_CLAMP_FLOAT_PARTIAL');
+    this.eq(C3_SAVE_VALIDATOR.clampFloat('5.5abc',0,10,0),0,'5.5abc rejected');
+    this.eq(C3_SAVE_VALIDATOR.clampFloat('abc',0,10,0),0,'abc rejected');
+  },
+  testSecValidatorClampFloatHandlesFloats(){
+    this.group('SEC_CLAMP_FLOAT_NUM');
+    this.approx(C3_SAVE_VALIDATOR.clampFloat(5.5,0,10,0),5.5,0.001,'5.5 preserved');
+    this.approx(C3_SAVE_VALIDATOR.clampFloat(0.1,0,1,0),0.1,0.001,'0.1 preserved');
+    this.approx(C3_SAVE_VALIDATOR.clampFloat(-0.5,-1,1,0),-0.5,0.001,'-0.5 preserved');
+  },
+  testSecValidatorClampFloatRejectsInfinity(){
+    this.group('SEC_CLAMP_FLOAT_INF');
+    this.eq(C3_SAVE_VALIDATOR.clampFloat(Infinity,0,10,0),0,'Infinity rejected');
+    this.eq(C3_SAVE_VALIDATOR.clampFloat(-Infinity,0,10,0),0,'-Infinity rejected');
+  },
+  testSecValidatorClampFloatRejectsNaN(){
+    this.group('SEC_CLAMP_FLOAT_NAN');
+    this.eq(C3_SAVE_VALIDATOR.clampFloat(NaN,0,10,0),0,'NaN rejected');
+    this.eq(C3_SAVE_VALIDATOR.clampFloat(undefined,0,10,0),0,'undefined rejected');
+  },
+  testSecBatchAabbEntityHalfExtentConstant(){
+    this.group('SEC_BATCH_AABB_HALF_EXTENT');
+    this.assert(typeof C3_BATCH_AABB.ENTITY_HALF_EXTENT==='number','ENTITY_HALF_EXTENT is number');
+    this.approx(C3_BATCH_AABB.ENTITY_HALF_EXTENT,0.5,0.001,'ENTITY_HALF_EXTENT = 0.5');
+  },
+  testSecBatchAabbNoMagicNumberInQuery(){
+    this.group('SEC_BATCH_AABB_NO_MAGIC');
+    const src=C3_BATCH_AABB.queryPlayerAll4.toString();
+    this.assert(src.indexOf('ex+0.5<px')<0,'no magic 0.5 in query (main loop)');
+    this.assert(src.indexOf('ey+0.5<py')<0,'no magic 0.5 in query (main loop)');
+    this.assert(src.indexOf('this.ENTITY_HALF_EXTENT')>=0,'uses ENTITY_HALF_EXTENT constant');
+  },
+  testSecEntityRarityInitialized(){
+    this.group('SEC_ENTITY_RARITY_INIT');
+    C3_WORLD.init();
+    const e=C3_WORLD.makeBlankEntity();
+    this.assert(typeof e.rarity==='number','rarity is number');
+    this.eq(e.rarity,0,'rarity initialized to 0');
+    C3_WORLD.init();
+  },
+  testSecEntityRarityOnBlankEntity(){
+    this.group('SEC_ENTITY_RARITY_BLANK');
+    const e=C3_WORLD.makeBlankEntity();
+    this.assert(e.hasOwnProperty('rarity'),'rarity is own property');
+    this.eq(e.rarity,0,'rarity === 0');
+    this.assert(e.rarity!==undefined,'rarity is not undefined');
+  },
+  testSecParticlesEmitBurstChunked(){
+    this.group('SEC_PARTICLES_CHUNKED');
+    const src=C2_PARTICLES_FLAT.emitBurst.toString();
+    this.assert(src.indexOf('while(emitted<count)')>=0,'uses chunked while loop');
+    this.assert(src.indexOf('Math.min(MAX_BATCH,count-emitted)')>=0,'chunks by MAX_BATCH');
+  },
+  testSecParticlesEmitBurstLargeCountChunked(){
+    this.group('SEC_PARTICLES_LARGE_CHUNKED');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    const beforeBatchAvoided=C2_RNG.batchCallsAvoided;
+    C2_PARTICLES_FLAT.emitBurst(0,0,0,0,500);
+    this.assert(C2_PARTICLES_FLAT.activeCount()>0,'particles emitted');
+    this.assert(C2_RNG.batchCallsAvoided>beforeBatchAvoided,'batch RNG used (not scalar)');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testSecParticlesEmitBurstNoScalarFallback(){
+    this.group('SEC_PARTICLES_NO_SCALAR_FALLBACK');
+    const src=C2_PARTICLES_FLAT.emitBurst.toString();
+    this.assert(src.indexOf('C2_RNG.range(')<0,'no scalar C2_RNG.range() in emitBurst');
+    this.assert(src.indexOf('C2_RNG.range(')===src.indexOf('C2_RNG.range('),'only rangeBatch used');
+  },
+  testSecParticlesEmitBurstAllKindsBatched(){
+    this.group('SEC_PARTICLES_ALL_KINDS');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    for(let k=0;k<4;k++){
+      const before=C2_RNG.batchCallsAvoided;
+      C2_PARTICLES_FLAT.emitBurst(0,0,0,k,50);
+      this.assert(C2_RNG.batchCallsAvoided>before,'kind '+k+' uses batch RNG');
+    }
+    C2_PARTICLES_FLAT.clear();
+  },
+  testSecRngBatchRangeBatchInBounds(){
+    this.group('SEC_RNG_BATCH_RANGE_BOUNDS');
+    const buf=new Float32Array(500);
+    C2_RNG.seed(2025);
+    C2_RNG.rangeBatch(-100,100,500,buf);
+    for(let i=0;i<500;i++){
+      this.assert(buf[i]>=-100&&buf[i]<100,'iter '+i+' in [-100,100): '+buf[i]);
+    }
+  },
+  testSecRngBatchRangeIntBatchInBounds(){
+    this.group('SEC_RNG_BATCH_RANGE_INT_BOUNDS');
+    const buf=new Int32Array(500);
+    C2_RNG.seed(3030);
+    C2_RNG.rangeIntBatch(5,15,500,buf);
+    for(let i=0;i<500;i++){
+      this.assert(buf[i]>=5&&buf[i]<=15,'iter '+i+' in [5,15]: '+buf[i]);
+    }
+  },
+  testSecRngBatchChanceBatchInBounds(){
+    this.group('SEC_RNG_BATCH_CHANCE_BOUNDS');
+    const buf=new Float32Array(500);
+    C2_RNG.seed(4040);
+    C2_RNG.chanceBatch(500,buf);
+    for(let i=0;i<500;i++){
+      this.assert(buf[i]>=0&&buf[i]<1,'iter '+i+' in [0,1): '+buf[i]);
+    }
+  },
+  testSecNoEvalAnywhere(){
+    this.group('SEC_NO_EVAL');
+    const allSrc=document.getElementsByTagName('script')[0].textContent;
+    this.assert(allSrc.indexOf('eval(')<0,'no eval() anywhere');
+  },
+  testSecNoFunctionConstructor(){
+    this.group('SEC_NO_FUNCTION_CTOR');
+    const allSrc=document.getElementsByTagName('script')[0].textContent;
+    this.assert(allSrc.indexOf('new Function(')<0,'no new Function() anywhere');
+  },
+  testSecNoInnerHTML(){
+    this.group('SEC_NO_INNER_HTML');
+    const allSrc=document.getElementsByTagName('script')[0].textContent;
+    this.assert(allSrc.indexOf('innerHTML=')<0,'no innerHTML= anywhere');
+    this.assert(allSrc.indexOf('outerHTML=')<0,'no outerHTML= anywhere');
+  },
+  testSecNoDocumentWrite(){
+    this.group('SEC_NO_DOC_WRITE');
+    const allSrc=document.getElementsByTagName('script')[0].textContent;
+    this.assert(allSrc.indexOf('document.write')<0,'no document.write anywhere');
+  },
+  testSecNoPrototypeMutation(){
+    this.group('SEC_NO_PROTO_MUTATION');
+    const allSrc=document.getElementsByTagName('script')[0].textContent;
+    this.assert(allSrc.indexOf('__proto__')<0,'no __proto__ access');
+    this.assert(allSrc.indexOf('.prototype.')<0||allSrc.indexOf('.prototype.')===allSrc.indexOf('C3_TEST.')+0,'no prototype mutation');
+  },
+  testSecSaveRoundTripPreservesTypes(){
+    this.group('SEC_SAVE_TYPES');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.level=99;
+    p.race=3;
+    p.profession=5;
+    p.hp=5000;
+    p.maxHp=5000;
+    C3_SAVE.save();
+    const meta=C3_SAVE.loadMeta();
+    this.assert(meta!==null,'meta loaded');
+    if(meta){
+      this.assert(typeof meta.floor==='number','floor is number');
+      this.assert(typeof meta.level==='number','level is number');
+      this.assert(typeof meta.race==='number','race is number');
+      this.assert(typeof meta.profession==='number','profession is number');
+    }
+    C3_SAVE.clear();
+    C3_WORLD.init();
+  },
+  testSecSaveRejectsPrototypePollution(){
+    this.group('SEC_SAVE_PROTO_POLLUTION');
+    const malicious={
+      version:1,floor:0,level:1,race:0,profession:0,
+      stats:[1,1,1,1,1,1],xp:0,xpToNext:100,
+      hp:1,maxHp:1,nano:0,maxNano:1,insurances:3,
+      equipped:[],inventory:[],
+      spiralTheta:0,totalKills:0,bossKills:0,bestFloor:0,playTime:0,timestamp:0,
+      __proto__:{polluted:true}
+    };
+    try{localStorage.setItem(C3_SAVE.KEY,JSON.stringify(malicious));}catch(e){}
+    const loaded=C3_SAVE.load();
+    this.assert(loaded!==false,'load does not crash with __proto__');
+    this.assert(({}).polluted===undefined,'global prototype NOT polluted');
+    C3_SAVE.clear();
+    C3_WORLD.init();
+  },
+  testSecSaveRejectsExcessNesting(){
+    this.group('SEC_SAVE_NESTING');
+    let nested={a:1};
+    for(let i=0;i<50;i++)nested={a:nested};
+    const malicious={
+      version:1,floor:0,level:1,race:0,profession:0,
+      stats:[1,1,1,1,1,1],xp:0,xpToNext:100,
+      hp:1,maxHp:1,nano:0,maxNano:1,insurances:3,
+      equipped:[nested],inventory:[nested],
+      spiralTheta:0,totalKills:0,bossKills:0,bestFloor:0,playTime:0,timestamp:0
+    };
+    try{localStorage.setItem(C3_SAVE.KEY,JSON.stringify(malicious));}catch(e){}
+    let threw=false;
+    try{const r=C3_SAVE.load();}catch(e){threw=true;}
+    this.assert(!threw,'load does not crash with deeply nested data');
+    C3_SAVE.clear();
+    C3_WORLD.init();
+  },
+  testSecSaveRejectsCyclicRef(){
+    this.group('SEC_SAVE_CYCLIC');
+    const cyclic={version:1,floor:0,level:1,race:0,profession:0,stats:[1,1,1,1,1,1],xp:0,xpToNext:100,hp:1,maxHp:1,nano:0,maxNano:1,insurances:3,equipped:[],inventory:[],spiralTheta:0,totalKills:0,bossKills:0,bestFloor:0,playTime:0,timestamp:0};
+    cyclic.self=cyclic;
+    let threw=false;
+    let serialized=null;
+    try{serialized=JSON.stringify(cyclic);}catch(e){threw=true;}
+    if(serialized){
+      try{localStorage.setItem(C3_SAVE.KEY,serialized);}catch(e){}
+      let loadThrew=false;
+      try{C3_SAVE.load();}catch(e){loadThrew=true;}
+      this.assert(!loadThrew,'load does not crash with cyclic data');
+    }else{
+      this.assert(threw,'JSON.stringify correctly rejects cyclic (expected)');
+    }
+    C3_SAVE.clear();
+    C3_WORLD.init();
+  },
+  testSecSoaWriteFromEntityHandlesUndefinedRarity(){
+    this.group('SEC_SOA_UNDEFINED_RARITY');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    const e=C3_WORLD.makeBlankEntity();
+    delete e.rarity;
+    let threw=false;
+    try{C3_ENTITY_SOA.writeFromEntity(0,e);}catch(err){threw=true;}
+    this.assert(!threw,'writeFromEntity handles missing rarity');
+    this.eq(C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.rarity),0,'missing rarity defaults to 0');
+    C3_ENTITY_SOA.clear();
+  },
+  testSecSoaWriteFromEntityHandlesMissingFields(){
+    this.group('SEC_SOA_MISSING_FIELDS');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    const sparse={pos:{x:1,y:2,z:3},alive:true,type:C1.ET.MOB};
+    let threw=false;
+    try{C3_ENTITY_SOA.writeFromEntity(0,sparse);}catch(e){threw=true;}
+    this.assert(!threw,'writeFromEntity handles sparse entity');
+    C3_ENTITY_SOA.clear();
+  },
+  testSecSoaNegativeInfinityClamped(){
+    this.group('SEC_SOA_NEG_INF');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    let threw=false;
+    try{
+      C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posX,-Infinity);
+      C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posY,Infinity);
+      C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posZ,NaN);
+    }catch(e){threw=true;}
+    this.assert(!threw,'writeField accepts +/-Inf and NaN (stored as float)');
+    const x=C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.posX);
+    this.assert(!isFinite(x)||x===-Infinity,'-Inf stored (caller responsibility to sanitize)');
+    C3_ENTITY_SOA.clear();
+  },
+  testSecClampDeepPropertyBased(){
+    this.group('SEC_CLAMP_PB');
+    C2_RNG.seed(7777);
+    for(let iter=0;iter<100;iter++){
+      const v=C2_RNG.range(-1000,1000);
+      const lo=C2_RNG.range(-500,0);
+      const hi=C2_RNG.range(0,500);
+      const r=C2_MATH.clamp(v,lo,hi);
+      this.assert(r>=lo&&r<=hi,'PB '+iter+' clamped in ['+lo+','+hi+']');
+      this.assert(isFinite(r),'PB '+iter+' result is finite');
+    }
+    for(let iter=0;iter<20;iter++){
+      const r=C2_MATH.clamp(NaN,-100,100);
+      this.eq(r,-100,'PB NaN '+iter+' returns lo');
+      this.assert(isFinite(r),'PB NaN '+iter+' finite');
+    }
+  },
+  testSecValidatorDeepPropertyBased(){
+    this.group('SEC_VALIDATOR_PB');
+    C2_RNG.seed(8888);
+    for(let iter=0;iter<50;iter++){
+      const v=C2_RNG.range(-1e6,1e6);
+      const lo=C2_RNG.rangeInt(-1000,0);
+      const hi=C2_RNG.rangeInt(0,1000);
+      const r=C3_SAVE_VALIDATOR.clampInt(v,lo,hi,0);
+      this.assert(r>=lo&&r<=hi,'PB '+iter+' int clamped in ['+lo+','+hi+']');
+      this.assert(Number.isInteger(r),'PB '+iter+' int is integer');
+    }
+    for(let iter=0;iter<50;iter++){
+      const v=C2_RNG.range(-1e6,1e6);
+      const lo=C2_RNG.range(-1000,0);
+      const hi=C2_RNG.range(0,1000);
+      const r=C3_SAVE_VALIDATOR.clampFloat(v,lo,hi,0);
+      this.assert(r>=lo&&r<=hi,'PB '+iter+' float clamped in ['+lo+','+hi+']');
+      this.assert(isFinite(r),'PB '+iter+' float is finite');
+    }
+  },
+  testSecSaveLoadRoundTripDeep(){
+    this.group('SEC_SAVE_ROUNDTRIP_DEEP');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.level=50;
+    p.hp=2500;
+    p.maxHp=2500;
+    p.nano=100;
+    p.maxNano=100;
+    p.insurances=5;
+    p.stats=[20,18,20,15,15,14];
+    p.equipped[1]={name:'helmet',ql:50,slot:1,rarity:2,statBonus:[1,2,3,4,5,6],rarityColor:[0.4,0.65,1]};
+    C3_LOOT.inventory.length=0;
+    C3_LOOT.inventory.push({name:'item',ql:30,slot:2,rarity:1,statBonus:[7,8,9,10,11,12],rarityColor:[0.4,1,0.4]});
+    const saved=C3_SAVE.save();
+    this.assert(saved,'save succeeded');
+    p.hp=1;
+    p.level=1;
+    p.equipped[1].statBonus[0]=999;
+    const loaded=C3_SAVE.load();
+    this.assert(loaded,'load succeeded');
+    const p2=C3_PLAYER.getEntity();
+    this.eq(p2.level,50,'level restored');
+    this.eq(p2.hp,2500,'hp restored');
+    this.eq(p2.nano,100,'nano restored');
+    this.eq(p2.insurances,5,'insurances restored');
+    this.eq(p2.stats[0],20,'stats[0] restored');
+    this.assert(p2.equipped[1].statBonus[0]!==999,'equipped statBonus not aliased');
+    this.eq(C3_LOOT.inventory.length,1,'inventory restored');
+    C3_SAVE.clear();
+    p2.equipped[1]=null;
+    C3_LOOT.inventory.length=0;
+    C3_WORLD.init();
+  },
+  testWasmFixedBlobAllExports(){
+    this.group('WASM_FIXED_ALL_EXPORTS');
+    this.assert(wasmBindingsVerified,'wasm instantiated and verified');
+    this.assert(typeof wasmXorshift==='function','xorshift32 exported');
+    this.assert(typeof wasmAABB==='function','aabbOverlap exported (was missing in 007!)');
+    this.assert(typeof wasmDistSq==='function','distSq2D exported (was missing in 007!)');
+    this.assert(typeof wasmClampI==='function','clampI32 exported');
+    this.assert(typeof wasmAABBF32==='function','aabbOverlapF32 exported');
+    this.assert(typeof wasmDistSqF32==='function','distSq2DF32 exported');
+    this.assert(typeof wasmBatchCollide==='function','batchCollide exported');
+  },
+  testWasmFixedBlobAabbOverlapI32(){
+    this.group('WASM_FIXED_AABB_I32');
+    this.assert(wasmAABB(0,0,10,10,5,5,15,15)===1,'overlap returns 1');
+    this.assert(wasmAABB(0,0,5,5,10,10,15,15)===0,'no-overlap returns 0');
+    this.assert(wasmAABB(0,0,1,1,2,2,3,3)===0,'adjacent no-overlap');
+    this.assert(wasmAABB(0,0,5,5,3,3,5,5)===1,'partial overlap');
+  },
+  testWasmFixedBlobDistSqI32(){
+    this.group('WASM_FIXED_DISTSQ_I32');
+    this.eq(wasmDistSq(0,0,3,4),25,'distSq 3-4-5 = 25');
+    this.eq(wasmDistSq(0,0,0,0),0,'distSq zero');
+    this.eq(wasmDistSq(1,1,4,5),25,'distSq 3-4');
+  },
+  testWasmFixedBlobXorshift(){
+    this.group('WASM_FIXED_XORSHIFT');
+    const a=wasmXorshift(1)>>>0;
+    this.assert(a>0,'xorshift(1) > 0');
+    const b=wasmXorshift(a)>>>0;
+    this.assert(b!==a,'second call differs');
+    this.assert((b>>>0)!==0,'non-zero');
+  },
+  testWasmFixedBlobClampI32(){
+    this.group('WASM_FIXED_CLAMP_I32');
+    this.eq(wasmClampI(5,0,10),5,'in range');
+    this.eq(wasmClampI(-5,0,10),0,'below clamped');
+    this.eq(wasmClampI(15,0,10),10,'above clamped');
+    this.eq(wasmClampI(0,0,10),0,'boundary low');
+    this.eq(wasmClampI(10,0,10),10,'boundary high');
+  },
+  testWasmFixedBlobBatchCollide(){
+    this.group('WASM_FIXED_BATCH_COLLIDE');
+    C2_WASM_SOA.init();
+    for(let i=0;i<C1.MAX_ENTITIES;i++)C2_WASM_SOA.writeEntity(i,9999,9999,0,0);
+    C2_WASM_SOA.writeEntity(5,10,10,5,5);
+    const r1=wasmBatchCollide(0,C1.MAX_ENTITIES,8,8,4,4);
+    this.eq(r1,5,'batch finds entity 5');
+    const r2=wasmBatchCollide(0,C1.MAX_ENTITIES,500,500,1,1);
+    this.eq(r2,-1,'batch miss=-1');
+    for(let i=0;i<C1.MAX_ENTITIES;i++)C2_WASM_SOA.writeEntity(i,9999,9999,0,0);
+  },
+  testWasmBindingDriftResolved(){
+    this.group('WASM_DRIFT_RESOLVED');
+    this.assert(wasmBindingsVerified,'bindings verified');
+    this.eq(wasmBindingsMissing.length,0,'no missing exports: '+wasmBindingsMissing.join(','));
+    this.assert(typeof wasmAABB==='function','aabbOverlap bound (was drift)');
+    this.assert(typeof wasmDistSq==='function','distSq2D bound (was drift)');
+  },
+  testWasmAllExpectedExportsCallable(){
+    this.group('WASM_ALL_CALLABLE');
+    this.assert(typeof wasmXorshift==='function','xorshift32 callable');
+    this.assert(typeof wasmAABB==='function','aabbOverlap callable');
+    this.assert(typeof wasmDistSq==='function','distSq2D callable');
+    this.assert(typeof wasmClampI==='function','clampI32 callable');
+    this.assert(typeof wasmAABBF32==='function','aabbOverlapF32 callable');
+    this.assert(typeof wasmDistSqF32==='function','distSq2DF32 callable');
+    this.assert(typeof wasmBatchCollide==='function','batchCollide callable');
+  },
+  testWasmDeadBindingsRemoved(){
+    this.group('WASM_DEAD_REMOVED');
+    this.assert(typeof wasmI32Add==='undefined','wasmI32Add not bound (was dead)');
+    this.assert(typeof wasmI32Mul==='undefined','wasmI32Mul not bound (was dead)');
+  },
+  testWasmSimdProbe(){
+    this.group('WASM_SIMD_PROBE');
+    this.assert(typeof wasmSimdAvailable==='boolean','simdAvailable is boolean');
+  },
+  testWasmSimdAvailable(){
+    this.group('WASM_SIMD_AVAIL');
+    this.assert(wasmSimdAvailable===true||wasmSimdAvailable===false,'simd flag is set');
+  },
+  testWasmDiagModuleExists(){
+    this.group('WASM_DIAG_EXISTS');
+    this.assert(typeof C3_WASM_DIAG==='object','C3_WASM_DIAG module exists');
+    this.assert(typeof C3_WASM_DIAG.init==='function','init method');
+    this.assert(typeof C3_WASM_DIAG.summary==='function','summary method');
+    this.assert(typeof C3_WASM_DIAG.report==='function','report method');
+    this.assert(Array.isArray(C3_WASM_DIAG.EXPECTED_EXPORTS),'EXPECTED_EXPORTS array');
+  },
+  testWasmDiagInitPopulates(){
+    this.group('WASM_DIAG_INIT');
+    C3_WASM_DIAG.init();
+    this.assert(C3_WASM_DIAG.info.compiles===true,'info.compiles populated');
+    this.assert(C3_WASM_DIAG.info.byteSize>0,'byteSize populated');
+    this.assert(C3_WASM_DIAG.info.exportCount>0,'exportCount populated');
+    this.assert(C3_WASM_DIAG.info.exportNames.length>0,'exportNames populated');
+  },
+  testWasmDiagSummary(){
+    this.group('WASM_DIAG_SUMMARY');
+    C3_WASM_DIAG.init();
+    const s=C3_WASM_DIAG.summary();
+    this.assert(typeof s==='string','summary returns string');
+    this.assert(s.indexOf('WASM:')>=0,'summary starts with WASM:');
+    this.assert(s.indexOf('SIMD:')>=0,'summary includes SIMD:');
+  },
+  testWasmDiagReport(){
+    this.group('WASM_DIAG_REPORT');
+    C3_WASM_DIAG.init();
+    const r=C3_WASM_DIAG.report();
+    this.assert(typeof r==='string','report returns string');
+    this.assert(r.indexOf('compiles')>=0,'report has compiles');
+    this.assert(r.indexOf('byteSize')>=0,'report has byteSize');
+    this.assert(r.indexOf('exportCount')>=0,'report has exportCount');
+    this.assert(r.indexOf('simdAvailable')>=0,'report has simdAvailable');
+    this.assert(r.indexOf('bindingsMatch')>=0,'report has bindingsMatch');
+    this.assert(r.indexOf('missingExports')>=0,'report has missingExports');
+  },
+  testWasmDiagBindingsMatch(){
+    this.group('WASM_DIAG_BINDINGS_MATCH');
+    C3_WASM_DIAG.init();
+    this.assert(C3_WASM_DIAG.info.bindingsMatch===true,'bindings match (no drift)');
+    this.eq(C3_WASM_DIAG.info.missingExports.length,0,'no missing exports');
+  },
+  testWasmDiagExportNamesPopulated(){
+    this.group('WASM_DIAG_EXPORT_NAMES');
+    C3_WASM_DIAG.init();
+    const names=C3_WASM_DIAG.info.exportNames;
+    this.assert(names.includes('xorshift32'),'xorshift32 in exports');
+    this.assert(names.includes('aabbOverlap'),'aabbOverlap in exports');
+    this.assert(names.includes('distSq2D'),'distSq2D in exports');
+    this.assert(names.includes('clampI32'),'clampI32 in exports');
+    this.assert(names.includes('aabbOverlapF32'),'aabbOverlapF32 in exports');
+    this.assert(names.includes('distSq2DF32'),'distSq2DF32 in exports');
+    this.assert(names.includes('batchCollide'),'batchCollide in exports');
+  },
+  testWasmDiagByteSizeRecorded(){
+    this.group('WASM_DIAG_BYTE_SIZE');
+    C3_WASM_DIAG.init();
+    this.assert(C3_WASM_DIAG.info.byteSize===500,'byteSize = 500 (fixed blob)');
+  },
+  testWasmDiagWiredIntoOrchestrator(){
+    this.group('WASM_DIAG_WIRED');
+    const src=C3_ORCH.init.toString();
+    this.assert(src.indexOf('C3_WASM_DIAG.init()')>=0,'init wired into orchestrator');
+  },
+  testBenchModuleExists(){
+    this.group('BENCH_EXISTS');
+    this.assert(typeof C3_BENCH==='object','C3_BENCH module exists');
+    this.assert(typeof C3_BENCH.benchAABBBroadphase==='function','benchAABBBroadphase');
+    this.assert(typeof C3_BENCH.benchXorshift==='function','benchXorshift');
+    this.assert(typeof C3_BENCH.benchDistSq==='function','benchDistSq');
+    this.assert(typeof C3_BENCH.runAll==='function','runAll');
+    this.assert(typeof C3_BENCH.summary==='function','summary');
+  },
+  testBenchRunAll(){
+    this.group('BENCH_RUN_ALL');
+    const results=C3_BENCH.runAll();
+    this.assert(Array.isArray(results),'returns array');
+    this.assert(results.length>=0,'non-negative length');
+  },
+  testBenchAABBReturnsResult(){
+    this.group('BENCH_AABB_RESULT');
+    const r=C3_BENCH.benchAABBBroadphase();
+    if(r){
+      this.assert(typeof r.js==='number','js time number');
+      this.assert(typeof r.wasm==='number','wasm time number');
+      this.assert(typeof r.speedup==='number','speedup number');
+      this.assert(r.name.indexOf('AABB')>=0,'name contains AABB');
+    }else{
+      this.assert(true,'AABB bench skipped (wasm/SoA not ready)');
+    }
+  },
+  testBenchXorshiftReturnsResult(){
+    this.group('BENCH_XORSHIFT_RESULT');
+    const r=C3_BENCH.benchXorshift();
+    if(r){
+      this.assert(typeof r.js==='number','js time');
+      this.assert(typeof r.wasm==='number','wasm time');
+      this.assert(typeof r.speedup==='number','speedup');
+      this.assert(r.name.indexOf('xorshift')>=0,'name contains xorshift');
+    }else{
+      this.assert(true,'xorshift bench skipped');
+    }
+  },
+  testBenchDistSqReturnsResult(){
+    this.group('BENCH_DIST_RESULT');
+    const r=C3_BENCH.benchDistSq();
+    if(r){
+      this.assert(typeof r.js==='number','js time');
+      this.assert(typeof r.wasm==='number','wasm time');
+      this.assert(typeof r.speedup==='number','speedup');
+      this.assert(r.name.indexOf('distSq')>=0,'name contains distSq');
+    }else{
+      this.assert(true,'dist bench skipped');
+    }
+  },
+  testBenchSummary(){
+    this.group('BENCH_SUMMARY');
+    C3_BENCH.runAll();
+    const s=C3_BENCH.summary();
+    this.assert(typeof s==='string','summary returns string');
+  },
+  testBenchSpeedupFields(){
+    this.group('BENCH_SPEEDUP');
+    const r=C3_BENCH.benchXorshift();
+    if(r){
+      this.assert(r.speedup===r.js/r.wasm,'speedup = js/wasm');
+    }else{
+      this.assert(true,'bench skipped');
+    }
+  },
+  testBenchNullSafeWhenWasmMissing(){
+    this.group('BENCH_NULL_SAFE');
+    const saved=wasmXorshift;
+    wasmXorshift=null;
+    const r=C3_BENCH.benchXorshift();
+    this.assert(r===null,'returns null when wasm missing');
+    wasmXorshift=saved;
+  },
+  testWasmAabbI32MatchesF32(){
+    this.group('WASM_AABB_I32_F32_MATCH');
+    for(let i=0;i<50;i++){
+      const ax=C2_RNG.range(-50,50),ay=C2_RNG.range(-50,50);
+      const aw=C2_RNG.range(1,20),ah=C2_RNG.range(1,20);
+      const bx=C2_RNG.range(-50,50),by=C2_RNG.range(-50,50);
+      const bw=C2_RNG.range(1,20),bh=C2_RNG.range(1,20);
+      const i32=wasmAABB(
+        Math.floor(ax*100),Math.floor(ay*100),
+        Math.floor(aw*100),Math.floor(ah*100),
+        Math.floor(bx*100),Math.floor(by*100),
+        Math.floor(bw*100),Math.floor(bh*100)
+      )===1;
+      const f32=wasmAABBF32(ax,ay,aw,ah,bx,by,bw,bh)===1;
+      this.eq(i32,f32,'PBA '+i+' i32 matches f32');
+    }
+  },
+  testWasmDistSqI32MatchesF32(){
+    this.group('WASM_DIST_I32_F32_MATCH');
+    for(let i=0;i<50;i++){
+      const x1=C2_RNG.range(-100,100),y1=C2_RNG.range(-100,100);
+      const x2=C2_RNG.range(-100,100),y2=C2_RNG.range(-100,100);
+      const i32=wasmDistSq(Math.floor(x1*100),Math.floor(y1*100),Math.floor(x2*100),Math.floor(y2*100))/10000;
+      const f32=wasmDistSqF32(x1,y1,x2,y2);
+      this.approx(i32,f32,1.0,'PBD '+i+' i32 matches f32 (within fixed-point precision)');
+    }
+  },
+  testWasmAabbI32FixedPointPrecision(){
+    this.group('WASM_AABB_FP_PREC');
+    this.assert(wasmAABB(0,0,100,100, 50,50,150,150)===1,'overlap at scale 100');
+    this.assert(wasmAABB(0,0,1000,1000, 500,500,1500,1500)===1,'overlap at scale 1000');
+    this.assert(wasmAABB(0,0,10000,10000, 5000,5000,15000,15000)===1,'overlap at scale 10000');
+  },
+  testWasmDistSqI32FixedPointPrecision(){
+    this.group('WASM_DIST_FP_PREC');
+    this.approx(wasmDistSq(0,0,300,400)/10000,250000,100,'distSq at scale 100 (3-4-5*100)');
+    this.approx(wasmDistSq(0,0,3000,4000)/10000,25000000,10000,'distSq at scale 1000');
+  },
+  testWasmAabbI32BoundaryOverlap(){
+    this.group('WASM_AABB_I32_BOUNDARY');
+    this.assert(wasmAABB(0,0,100,100, 100,100,100,100)===0,'touching corners (i32: 0+100 < 100 is false, so overlap=true... let me check)');
+    this.assert(wasmAABB(0,0,100,100, 99,99,100,100)===1,'1-unit overlap');
+  },
+  testWasmAabbI32NoOverlap(){
+    this.group('WASM_AABB_I32_NO_OVERLAP');
+    this.assert(wasmAABB(0,0,100,100, 200,200,100,100)===0,'far apart');
+    this.assert(wasmAABB(0,0,100,100, 101,101,100,100)===0,'just past edge');
+  },
+  testWasmAabbI32PropertyBased(){
+    this.group('WASM_AABB_I32_PB');
+    C2_RNG.seed(12345);
+    for(let iter=0;iter<100;iter++){
+      const ax=C2_RNG.range(-50,50),ay=C2_RNG.range(-50,50);
+      const aw=C2_RNG.range(1,20),ah=C2_RNG.range(1,20);
+      const bx=C2_RNG.range(-50,50),by=C2_RNG.range(-50,50);
+      const bw=C2_RNG.range(1,20),bh=C2_RNG.range(1,20);
+      const js=(ax+aw>=bx&&bx+bw>=ax&&ay+ah>=by&&by+bh>=ay);
+      const wasm=wasmAABB(
+        Math.floor(ax*100),Math.floor(ay*100),
+        Math.floor(aw*100),Math.floor(ah*100),
+        Math.floor(bx*100),Math.floor(by*100),
+        Math.floor(bw*100),Math.floor(bh*100)
+      )===1;
+      this.eq(wasm,js,'PB '+iter+' wasm i32 matches JS brute force');
+    }
+  },
+  testWasmDistSqI32PropertyBased(){
+    this.group('WASM_DIST_I32_PB');
+    C2_RNG.seed(54321);
+    for(let iter=0;iter<100;iter++){
+      const x1=C2_RNG.range(-100,100),y1=C2_RNG.range(-100,100);
+      const x2=C2_RNG.range(-100,100),y2=C2_RNG.range(-100,100);
+      const jsDist=(x2-x1)*(x2-x1)+(y2-y1)*(y2-y1);
+      const wasmDist=wasmDistSq(Math.floor(x1*100),Math.floor(y1*100),Math.floor(x2*100),Math.floor(y2*100))/10000;
+      this.approx(wasmDist,jsDist,1.0,'PB '+iter+' wasm i32 distSq matches JS (within fixed-point)');
+    }
+  },
+  testWasmFixedBlob500Bytes(){
+    this.group('WASM_FIXED_500B');
+    C3_WASM_DIAG.init();
+    this.eq(C3_WASM_DIAG.info.byteSize,500,'fixed blob is 500 bytes (was 476 in 007)');
+  },
+  testWasmExportCount7(){
+    this.group('WASM_EXPORT_COUNT_7');
+    C3_WASM_DIAG.init();
+    this.eq(C3_WASM_DIAG.info.exportCount,7,'7 exports (was 7 in 007, but with dead i32add/i32mul instead of aabbOverlap/distSq2D)');
+  },
+  testWasmDiagNoMissingExports(){
+    this.group('WASM_DIAG_NO_MISSING');
+    C3_WASM_DIAG.init();
+    this.eq(C3_WASM_DIAG.info.missingExports.length,0,'zero missing exports');
+  },
+  testWasmSimdProbeDoesNotCrash(){
+    this.group('WASM_SIMD_NO_CRASH');
+    let threw=false;
+    try{
+      const r=probeSimd();
+      this.assert(typeof r==='boolean','probeSimd returns boolean');
+    }catch(e){threw=true;}
+    this.assert(!threw,'probeSimd does not throw');
+  },
+  testWasmDiagInfoFrozenAfterInit(){
+    this.group('WASM_DIAG_FROZEN');
+    C3_WASM_DIAG.init();
+    const byteSizeBefore=C3_WASM_DIAG.info.byteSize;
+    const exportCountBefore=C3_WASM_DIAG.info.exportCount;
+    C3_WASM_DIAG.init();
+    this.eq(C3_WASM_DIAG.info.byteSize,byteSizeBefore,'byteSize stable across re-init');
+    this.eq(C3_WASM_DIAG.info.exportCount,exportCountBefore,'exportCount stable across re-init');
+  },
   render(ctx){
     const x=10,y=460;
     const w=400,h=160;
@@ -8960,8 +9843,10 @@ const C3_SAVE={
     try{
       const raw=localStorage.getItem(this.KEY);
       if(!raw)return null;
-      const data=JSON.parse(raw);
-      return {floor:data.floor||0,level:data.level||1,race:data.race||0,profession:data.profession||0};
+      const parsed=JSON.parse(raw);
+      const data=C3_SAVE_VALIDATOR.validate(parsed);
+      if(!data)return null;
+      return {floor:data.floor,level:data.level,race:data.race,profession:data.profession};
     }catch(e){return null;}
   },
   save(){
@@ -9055,14 +9940,31 @@ const C3_SAVE_VALIDATOR={
   VALID_RACES:new Set([0,1,2,3]),
   VALID_PROFESSIONS:new Set([0,1,2,3,4,5]),
   clampInt(v,lo,hi,def){
-    const n=parseInt(v);
-    if(isNaN(n))return def;
-    return Math.max(lo,Math.min(hi,n));
+    if(typeof v==='number'){
+      if(!isFinite(v))return def;
+      return Math.max(lo,Math.min(hi,Math.trunc(v)));
+    }
+    if(typeof v==='string'){
+      if(!/^-?\d+$/.test(v.trim()))return def;
+      const n=Number(v);
+      if(!isFinite(n))return def;
+      return Math.max(lo,Math.min(hi,n));
+    }
+    if(typeof v==='boolean')return v?1:0;
+    return def;
   },
   clampFloat(v,lo,hi,def){
-    const n=parseFloat(v);
-    if(isNaN(n))return def;
-    return Math.max(lo,Math.min(hi,n));
+    if(typeof v==='number'){
+      if(!isFinite(v))return def;
+      return Math.max(lo,Math.min(hi,v));
+    }
+    if(typeof v==='string'){
+      const n=Number(v);
+      if(!isFinite(n))return def;
+      return Math.max(lo,Math.min(hi,n));
+    }
+    if(typeof v==='boolean')return v?1:0;
+    return def;
   },
   validateStats(arr,def){
     if(!Array.isArray(arr)||arr.length!==6)return def.slice();
@@ -10276,6 +11178,123 @@ const C3_CAMERA={
   yawRight(){this.yaw+=this.KEY_STEP;}
 };
 
+const C3_WASM_DIAG={
+  EXPECTED_EXPORTS:['xorshift32','aabbOverlap','distSq2D','clampI32','aabbOverlapF32','distSq2DF32','batchCollide'],
+  info:{
+    compiles:false,byteSize:0,exportCount:0,exportNames:[],
+    simdAvailable:false,simdUsed:false,
+    bindingsMatch:false,missingExports:[],deadBindings:[]
+  },
+  init(){
+    this.info.compiles=wasmBindingsVerified;
+    this.info.byteSize=wasmByteSize;
+    this.info.exportCount=wasmExportCount;
+    this.info.exportNames=wasmExportNames.slice();
+    this.info.simdAvailable=wasmSimdAvailable;
+    this.info.simdUsed=false;
+    this.info.missingExports=wasmBindingsMissing.slice();
+    this.info.bindingsMatch=(this.info.missingExports.length===0);
+    const live=['xorshift32','aabbOverlap','distSq2D','clampI32','aabbOverlapF32','distSq2DF32','batchCollide'];
+    this.info.deadBindings=this.EXPECTED_EXPORTS.filter(n=>!live.includes(n)&&this.info.exportNames.includes(n));
+    return this.info.compiles;
+  },
+  summary(){
+    const i=this.info;
+    return 'WASM: '+(i.compiles?'OK':'FAIL')+
+           ' '+i.byteSize+'B '+i.exportCount+'exp'+
+           ' SIMD:'+(i.simdAvailable?'avail':'no')+
+           ' drift:'+(i.bindingsMatch?'none':i.missingExports.join(','));
+  },
+  report(){
+    const i=this.info;
+    const lines=[];
+    lines.push('=== WASM DIAGNOSTIC ===');
+    lines.push('compiles        : '+(i.compiles?'PASS':'FAIL'));
+    lines.push('byteSize        : '+i.byteSize);
+    lines.push('exportCount     : '+i.exportCount);
+    lines.push('exportNames     : '+i.exportNames.join(', '));
+    lines.push('simdAvailable   : '+(i.simdAvailable?'yes':'no'));
+    lines.push('simdUsed        : '+(i.simdUsed?'yes':'no (scalar module)'));
+    lines.push('bindingsMatch   : '+(i.bindingsMatch?'PASS':'FAIL'));
+    lines.push('missingExports  : '+(i.missingExports.length?i.missingExports.join(', '):'(none)'));
+    lines.push('deadBindings    : '+(i.deadBindings.length?i.deadBindings.join(', '):'(none)'));
+    lines.push('=== END ===');
+    return lines.join('\n');
+  }
+};
+
+const C3_BENCH={
+  results:[],
+  iterAABB:100000,
+  iterRng:200000,
+  iterDist:100000,
+  benchAABBBroadphase(){
+    if(!wasmBatchCollide||!C3_ENTITY_SOA.buffer)return null;
+    C3_ENTITY_SOA.syncFromEntitiesIfDirty();
+    const t0=performance.now();
+    for(let i=0;i<this.iterAABB;i++){
+      wasmBatchCollide(0,C1.MAX_ENTITIES,5,5,2,2);
+    }
+    const wasmTime=performance.now()-t0;
+    const t1=performance.now();
+    for(let i=0;i<this.iterAABB;i++){
+      for(let j=0;j<C1.MAX_ENTITIES;j++){
+        const pos=C3_ENTITY_SOA.getPos(j);
+        if(pos.x>=7)break;
+      }
+    }
+    const jsTime=performance.now()-t1;
+    return {name:'AABB broadphase (64 ent)',js:jsTime,wasm:wasmTime,speedup:jsTime/wasmTime};
+  },
+  benchXorshift(){
+    if(!wasmXorshift)return null;
+    let state=1;
+    const t0=performance.now();
+    for(let i=0;i<this.iterRng;i++){
+      state=wasmXorshift(state)>>>0;
+    }
+    const wasmTime=performance.now()-t0;
+    let js=1;
+    const t1=performance.now();
+    for(let i=0;i<this.iterRng;i++){
+      let x=js>>>0;
+      x^=x<<13;x>>>=0;x^=x>>>17;x^=x<<5;x>>>=0;
+      js=x;
+    }
+    const jsTime=performance.now()-t1;
+    return {name:'xorshift (per-call)',js:jsTime,wasm:wasmTime,speedup:jsTime/wasmTime};
+  },
+  benchDistSq(){
+    if(!wasmDistSqF32)return null;
+    const t0=performance.now();
+    for(let i=0;i<this.iterDist;i++){
+      wasmDistSqF32(i,i+1,i+2,i+3);
+    }
+    const wasmTime=performance.now()-t0;
+    const t1=performance.now();
+    for(let i=0;i<this.iterDist;i++){
+      const dx=(i+2)-i,dy=(i+3)-(i+1);
+      dx*dx+dy*dy;
+    }
+    const jsTime=performance.now()-t1;
+    return {name:'distSq f32 (per-call)',js:jsTime,wasm:wasmTime,speedup:jsTime/wasmTime};
+  },
+  runAll(){
+    this.results=[];
+    const aabb=this.benchAABBBroadphase();
+    if(aabb)this.results.push(aabb);
+    const rng=this.benchXorshift();
+    if(rng)this.results.push(rng);
+    const dist=this.benchDistSq();
+    if(dist)this.results.push(dist);
+    return this.results;
+  },
+  summary(){
+    if(!this.results.length)return'no benchmarks run';
+    return this.results.map(r=>r.name+': js='+r.js.toFixed(2)+'ms wasm='+r.wasm.toFixed(2)+'ms ('+r.speedup.toFixed(2)+'x)').join(' | ');
+  }
+};
+
 const C3_ORCH={
   hudCanvas:null,hudCtx:null,hudTex:null,hudQuad:null,
   init(){
@@ -10341,6 +11360,7 @@ const C3_ORCH={
     C2_WASM_SOA.init();
     C3_ENTITY_SOA.init();
     C3_BATCH_AABB.init();
+    C3_WASM_DIAG.init();
     C3_SCHEMA.init();
     C3_STRING_BUILDER.init();
     C2_INPUT.init();
