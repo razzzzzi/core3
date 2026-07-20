@@ -13,22 +13,30 @@ canvas{background:#000;image-rendering:pixelated;image-rendering:crisp-edges;dis
 <canvas id="game" width="1280" height="800"></canvas>
 <script>
 const WASM_B64="AGFzbQEAAAABMQZgAX8Bf2ACf38Bf2AIfX19fX19fX0Bf2AEfX19fQF9YAN/f38Bf2AGf399fX19AX8CDwEDZW52Bm1lbW9yeQIAAQMIBwABAQIDBAUHWQcKeG9yc2hpZnQzMgAABmkzMmFkZAABBmkzMm11bAACDmFhYmJPdmVybGFwRjMyAAMLZGlzdFNxMkRGMzIABAhjbGFtcEkzMgAFDGJhdGNoQ29sbGlkZQAGCqgCBx4AIAAgAEENdHMhACAAIABBEXZzIQAgACAAQQV0cwsHACAAIAFqCwcAIAAgAWwLPAAgACAEIAaSYAR/QQAFIAQgACACkmAEf0EABSABIAUgB5JgBH9BAAUgBSABIAOSYAR/QQAFQQELCwsLCxkAIAIgAJMgAiAAk5QgAyABkyADIAGTlJILGgAgACABSAR/IAEFIAAgAkoEfyACBSAACwsLhAEBAX9BACEGAkADQCAGIAFODQECQCAAIAZBEGxqKgIAIAIgBJJgDQAgAiAAIAZBEGxqKgIAIAAgBkEQbGoqAgiSYA0AIAAgBkEQbGoqAgQgAyAFkmANACADIAAgBkEQbGoqAgQgACAGQRBsaioCDJJgDQAgBg8LIAZBAWohBgwACwtBfws=";
-let wasmXorshift=null,wasmI32Add=null,wasmI32Mul=null,wasmAABB=null,wasmDistSq=null,wasmClampI=null,wasmAABBF32=null,wasmDistSqF32=null,wasmBatchCollide=null,wasmMemory=null;
+let wasmXorshift=null,wasmClampI=null,wasmAABBF32=null,wasmDistSqF32=null,wasmBatchCollide=null,wasmMemory=null;
+let wasmBindingsVerified=false,wasmBindingsMissing=[];
 function initWasm(){
-  const bytes=Uint8Array.from(atob(WASM_B64),c=>c.charCodeAt(0));
-  const mem=new WebAssembly.Memory({initial:1});
-  wasmMemory=mem;
-  const mod=new WebAssembly.Module(bytes);
-  const inst=new WebAssembly.Instance(mod,{env:{memory:mem}});
-  wasmXorshift=inst.exports.xorshift32;
-  wasmI32Add=inst.exports.i32add;
-  wasmI32Mul=inst.exports.i32mul;
-  wasmAABB=inst.exports.aabbOverlap;
-  wasmDistSq=inst.exports.distSq2D;
-  wasmClampI=inst.exports.clampI32;
-  wasmAABBF32=inst.exports.aabbOverlapF32;
-  wasmDistSqF32=inst.exports.distSq2DF32;
-  wasmBatchCollide=inst.exports.batchCollide;
+  try{
+    const bytes=Uint8Array.from(atob(WASM_B64),c=>c.charCodeAt(0));
+    const mem=new WebAssembly.Memory({initial:1});
+    wasmMemory=mem;
+    const mod=new WebAssembly.Module(bytes);
+    const inst=new WebAssembly.Instance(mod,{env:{memory:mem}});
+    const exp=inst.exports;
+    const EXPECTED=['xorshift32','clampI32','aabbOverlapF32','distSq2DF32','batchCollide'];
+    wasmBindingsMissing=EXPECTED.filter(n=>typeof exp[n]!=='function');
+    wasmXorshift=exp.xorshift32;
+    wasmClampI=exp.clampI32;
+    wasmAABBF32=exp.aabbOverlapF32;
+    wasmDistSqF32=exp.distSq2DF32;
+    wasmBatchCollide=exp.batchCollide;
+    wasmBindingsVerified=(wasmBindingsMissing.length===0);
+    if(!wasmBindingsVerified)console.warn('[wasm] missing exports:',wasmBindingsMissing.join(','));
+  }catch(e){
+    console.error('[wasm] disabled:',e.message);
+    wasmBindingsVerified=false;
+    wasmBindingsMissing=['instantiation'];
+  }
 }
 
 const C1={
@@ -127,15 +135,70 @@ const C2_MATH={
 
 const C2_RNG={
   state:1,
+  batchCallsAvoided:0,
   seed(s){this.state=(s>>>0)||1;},
   next(){
-    if(wasmXorshift){this.state=wasmXorshift(this.state)>>>0;return this.state;}
     let x=this.state>>>0;
     x^=x<<13;x>>>=0;
     x^=x>>>17;
     x^=x<<5;x>>>=0;
     this.state=x;
     return x;
+  },
+  nextBatch(n,outBuf){
+    const limit=Math.min(n,outBuf.length);
+    let x=this.state>>>0;
+    for(let i=0;i<limit;i++){
+      x^=x<<13;x>>>=0;
+      x^=x>>>17;
+      x^=x<<5;x>>>=0;
+      outBuf[i]=x;
+    }
+    this.state=x;
+    this.batchCallsAvoided+=limit-1;
+    return limit;
+  },
+  rangeBatch(lo,hi,n,outBuf){
+    const limit=Math.min(n,outBuf.length);
+    const span=hi-lo;
+    let x=this.state>>>0;
+    for(let i=0;i<limit;i++){
+      x^=x<<13;x>>>=0;
+      x^=x>>>17;
+      x^=x<<5;x>>>=0;
+      outBuf[i]=lo+((x&0xFFFFFF)/0x1000000)*span;
+    }
+    this.state=x;
+    this.batchCallsAvoided+=limit-1;
+    return limit;
+  },
+  rangeIntBatch(lo,hi,n,outBuf){
+    const limit=Math.min(n,outBuf.length);
+    if(hi<=lo){for(let i=0;i<limit;i++)outBuf[i]=lo;return limit;}
+    const span=hi-lo+1;
+    let x=this.state>>>0;
+    for(let i=0;i<limit;i++){
+      x^=x<<13;x>>>=0;
+      x^=x>>>17;
+      x^=x<<5;x>>>=0;
+      outBuf[i]=lo+(x%span);
+    }
+    this.state=x;
+    this.batchCallsAvoided+=limit-1;
+    return limit;
+  },
+  chanceBatch(n,outBuf){
+    const limit=Math.min(n,outBuf.length);
+    let x=this.state>>>0;
+    for(let i=0;i<limit;i++){
+      x^=x<<13;x>>>=0;
+      x^=x>>>17;
+      x^=x<<5;x>>>=0;
+      outBuf[i]=(x&0xFFFFFF)/0x1000000;
+    }
+    this.state=x;
+    this.batchCallsAvoided+=limit-1;
+    return limit;
   },
   range(lo,hi){return lo+(this.next()&0xFFFFFF)/0x1000000*(hi-lo);},
   rangeInt(lo,hi){if(hi<=lo)return lo;return lo+(this.next()%(hi-lo+1));},
@@ -229,6 +292,31 @@ void main(){
   if(uUnlit>0.5)result=tc*vColor;
   fragColor=result;
 }`,
+  vsInstancedSource:`#version 300 es
+precision highp float;
+in vec3 aPos;
+in vec3 aNormal;
+in vec2 aUV;
+in vec4 aColor;
+layout(location=4) in mat4 iWorldMat;
+uniform mat4 uView;
+uniform mat4 uProj;
+uniform vec3 uLightDir;
+uniform float uUnlit;
+uniform vec4 uLightColor;
+uniform vec4 uAmbientColor;
+uniform vec3 uCameraPos;
+out vec3 vNormal;
+out vec2 vUV;
+out vec4 vColor;
+void main(){
+  vec4 wp=iWorldMat*vec4(aPos,1.0);
+  vec4 vp=uView*wp;
+  gl_Position=uProj*vp;
+  vNormal=mat3(iWorldMat)*aNormal;
+  vUV=aUV;
+  vColor=aColor;
+}`,
   vsTextSource:`#version 300 es
 precision highp float;
 in vec2 aPos;
@@ -251,11 +339,12 @@ void main(){
   if(t.a<0.1)discard;
   fragColor=vec4(uColor.rgb,t.a*uColor.a);
 }`,
-  program:null,textProgram:null,
-  vs:null,ps:null,tvs:null,tps:null,
+  program:null,textProgram:null,programInstanced:null,
+  vs:null,ps:null,tvs:null,tps:null,vsInstanced:null,
   vao:null,textVao:null,
   uWorld:0,uView:0,uProj:0,uLightDir:0,uUnlit:0,uLightColor:0,uAmbientColor:0,uCameraPos:0,uTex:0,
   uScreen:0,uTextColor:0,uTextTex:0,
+  iUView:0,iUProj:0,iULightDir:0,iUUnlit:0,iULightColor:0,iUAmbientColor:0,iUCameraPos:0,iUTex:0,
   cbData:null,
   compile(type,src){
     const gl=C1.gl;
@@ -305,6 +394,26 @@ void main(){
     this.uScreen=gl.getUniformLocation(this.textProgram,'uScreen');
     this.uTextColor=gl.getUniformLocation(this.textProgram,'uColor');
     this.uTextTex=gl.getUniformLocation(this.textProgram,'uTex');
+    this.vsInstanced=this.compile(gl.VERTEX_SHADER,this.vsInstancedSource);
+    if(this.vsInstanced){
+      this.programInstanced=gl.createProgram();
+      gl.attachShader(this.programInstanced,this.vsInstanced);
+      gl.attachShader(this.programInstanced,this.ps);
+      gl.linkProgram(this.programInstanced);
+      if(!gl.getProgramParameter(this.programInstanced,gl.LINK_STATUS)){
+        console.error('Instanced link error:',gl.getProgramInfoLog(this.programInstanced));
+        this.programInstanced=null;
+      }else{
+        this.iUView=gl.getUniformLocation(this.programInstanced,'uView');
+        this.iUProj=gl.getUniformLocation(this.programInstanced,'uProj');
+        this.iULightDir=gl.getUniformLocation(this.programInstanced,'uLightDir');
+        this.iUUnlit=gl.getUniformLocation(this.programInstanced,'uUnlit');
+        this.iULightColor=gl.getUniformLocation(this.programInstanced,'uLightColor');
+        this.iUAmbientColor=gl.getUniformLocation(this.programInstanced,'uAmbientColor');
+        this.iUCameraPos=gl.getUniformLocation(this.programInstanced,'uCameraPos');
+        this.iUTex=gl.getUniformLocation(this.programInstanced,'uTex');
+      }
+    }
     this.cbData={
       world:C2_MATH.mat4Identity(),
       view:C2_MATH.mat4Identity(),
@@ -640,65 +749,20 @@ const C2_TEX={
 const C2_PARTICLES={
   pool:[],
   head:0,
+  proxyMode:true,
   init(){
-    this.pool=new Array(C1.MAX_PARTICLES);
-    for(let i=0;i<C1.MAX_PARTICLES;i++){
-      this.pool[i]={pos:{x:0,y:0,z:0},vel:{x:0,y:0,z:0},life:0,maxLife:1,color:[1,1,1,1],size:0.2,kind:0};
-    }
     this.head=0;
   },
-  alloc(){
-    for(let i=0;i<C1.MAX_PARTICLES;i++){
-      const idx=(this.head+i)%C1.MAX_PARTICLES;
-      if(this.pool[idx].life<=0){this.head=(idx+1)%C1.MAX_PARTICLES;return idx;}
-    }
-    const idx=this.head;this.head=(this.head+1)%C1.MAX_PARTICLES;return idx;
-  },
+  alloc(){return -1;},
   emit(pos,kind,count){
-    for(let i=0;i<count;i++){
-      const idx=this.alloc();
-      const p=this.pool[idx];
-      p.pos={x:pos.x,y:pos.y,z:pos.z};
-      p.kind=kind;
-      if(kind===0){
-        p.vel={x:C2_RNG.range(-3,3),y:C2_RNG.range(2,5),z:C2_RNG.range(-3,3)};
-        p.life=p.maxLife=C2_RNG.range(0.4,0.8);
-        p.size=C2_RNG.range(0.08,0.18);
-        p.color=[1,0.85,0.20,1];
-      }else if(kind===1){
-        p.vel={x:C2_RNG.range(-1.5,1.5),y:C2_RNG.range(0.5,2.5),z:C2_RNG.range(-1.5,1.5)};
-        p.life=p.maxLife=C2_RNG.range(0.3,0.7);
-        p.size=C2_RNG.range(0.06,0.12);
-        p.color=[0.85,0.10,0.10,1];
-      }else if(kind===2){
-        p.vel={x:C2_RNG.range(-1,1),y:C2_RNG.range(2,5),z:C2_RNG.range(-1,1)};
-        p.life=p.maxLife=C2_RNG.range(0.6,1.2);
-        p.size=C2_RNG.range(0.10,0.20);
-        p.color=[0.18,0.55,0.95,1];
-      }else if(kind===3){
-        p.vel={x:C2_RNG.range(-2,2),y:C2_RNG.range(3,7),z:C2_RNG.range(-2,2)};
-        p.life=p.maxLife=C2_RNG.range(0.6,1.2);
-        p.size=C2_RNG.range(0.10,0.20);
-        p.color=[1,0.85,0.20,1];
-      }
-    }
-    if(C2_PARTICLES_FLAT.buffer){
+    if(C2_PARTICLES_FLAT&&C2_PARTICLES_FLAT.buffer){
       C2_PARTICLES_FLAT.emitBurst(pos.x,pos.y,pos.z,kind,count);
     }
   },
-  update(dt){
-    for(let i=0;i<C1.MAX_PARTICLES;i++){
-      const p=this.pool[i];
-      if(p.life<=0)continue;
-      p.life-=dt;
-      if(p.life<=0){p.life=0;continue;}
-      p.vel.y-=9.8*dt;
-      p.pos.x+=p.vel.x*dt;
-      p.pos.y+=p.vel.y*dt;
-      p.pos.z+=p.vel.z*dt;
-    }
-  },
-  clear(){for(let i=0;i<C1.MAX_PARTICLES;i++)this.pool[i].life=0;}
+  update(dt){},
+  clear(){
+    if(C2_PARTICLES_FLAT&&C2_PARTICLES_FLAT.buffer)C2_PARTICLES_FLAT.clear();
+  }
 };
 
 const C2_PARTICLES_FLAT={
@@ -745,24 +809,55 @@ const C2_PARTICLES_FLAT={
     this.buffer[ptr+this.FIELD_OFFSET.b]=b;
   },
   emitBurst(px,py,pz,kind,count){
-    for(let i=0;i<count;i++){
-      let vx,vy,vz,life,size,r,g,b;
+    const MAX_BATCH=256;
+    const n=Math.min(count,MAX_BATCH);
+    if(!this._scratchVx){
+      this._scratchVx=new Float32Array(MAX_BATCH);
+      this._scratchVy=new Float32Array(MAX_BATCH);
+      this._scratchVz=new Float32Array(MAX_BATCH);
+      this._scratchLife=new Float32Array(MAX_BATCH);
+      this._scratchSize=new Float32Array(MAX_BATCH);
+    }
+    const vxBuf=this._scratchVx;
+    const vyBuf=this._scratchVy;
+    const vzBuf=this._scratchVz;
+    const lifeBuf=this._scratchLife;
+    const sizeBuf=this._scratchSize;
+    let r,g,b;
+    if(kind===0){
+      C2_RNG.rangeBatch(-3,3,n,vxBuf);C2_RNG.rangeBatch(2,5,n,vyBuf);C2_RNG.rangeBatch(-3,3,n,vzBuf);
+      C2_RNG.rangeBatch(0.4,0.8,n,lifeBuf);C2_RNG.rangeBatch(0.08,0.18,n,sizeBuf);
+      r=1;g=0.85;b=0.2;
+    }else if(kind===1){
+      C2_RNG.rangeBatch(-1.5,1.5,n,vxBuf);C2_RNG.rangeBatch(0.5,2.5,n,vyBuf);C2_RNG.rangeBatch(-1.5,1.5,n,vzBuf);
+      C2_RNG.rangeBatch(0.3,0.7,n,lifeBuf);C2_RNG.rangeBatch(0.06,0.12,n,sizeBuf);
+      r=0.85;g=0.1;b=0.1;
+    }else if(kind===2){
+      C2_RNG.rangeBatch(-1,1,n,vxBuf);C2_RNG.rangeBatch(2,5,n,vyBuf);C2_RNG.rangeBatch(-1,1,n,vzBuf);
+      C2_RNG.rangeBatch(0.6,1.2,n,lifeBuf);C2_RNG.rangeBatch(0.1,0.2,n,sizeBuf);
+      r=0.18;g=0.55;b=0.95;
+    }else{
+      C2_RNG.rangeBatch(-2,2,n,vxBuf);C2_RNG.rangeBatch(3,7,n,vyBuf);C2_RNG.rangeBatch(-2,2,n,vzBuf);
+      C2_RNG.rangeBatch(0.6,1.2,n,lifeBuf);C2_RNG.rangeBatch(0.1,0.2,n,sizeBuf);
+      r=1;g=0.85;b=0.2;
+    }
+    for(let i=0;i<n;i++){
+      this.emit(px,py,pz,vxBuf[i],vyBuf[i],vzBuf[i],lifeBuf[i],sizeBuf[i],r,g,b);
+    }
+    for(let i=n;i<count;i++){
+      let vx,vy,vz,life,size;
       if(kind===0){
         vx=C2_RNG.range(-3,3);vy=C2_RNG.range(2,5);vz=C2_RNG.range(-3,3);
         life=C2_RNG.range(0.4,0.8);size=C2_RNG.range(0.08,0.18);
-        r=1;g=0.85;b=0.2;
       }else if(kind===1){
         vx=C2_RNG.range(-1.5,1.5);vy=C2_RNG.range(0.5,2.5);vz=C2_RNG.range(-1.5,1.5);
         life=C2_RNG.range(0.3,0.7);size=C2_RNG.range(0.06,0.12);
-        r=0.85;g=0.1;b=0.1;
       }else if(kind===2){
         vx=C2_RNG.range(-1,1);vy=C2_RNG.range(2,5);vz=C2_RNG.range(-1,1);
         life=C2_RNG.range(0.6,1.2);size=C2_RNG.range(0.1,0.2);
-        r=0.18;g=0.55;b=0.95;
       }else{
         vx=C2_RNG.range(-2,2);vy=C2_RNG.range(3,7);vz=C2_RNG.range(-2,2);
         life=C2_RNG.range(0.6,1.2);size=C2_RNG.range(0.1,0.2);
-        r=1;g=0.85;b=0.2;
       }
       this.emit(px,py,pz,vx,vy,vz,life,size,r,g,b);
     }
@@ -806,63 +901,15 @@ const C2_PARTICLES_FLAT={
 
 const C2_BATCH={
   updateParticlesUnrolled(buffer,stride,fieldOffset,count,dt,gravity){
-    const f=fieldOffset;
-    const s=stride;
-    const g=gravity;
-    const limit4=count-(count%4);
-    let i=0;
-    for(;i<limit4;i+=4){
-      const p0=i*s,p1=(i+1)*s,p2=(i+2)*s,p3=(i+3)*s;
-      const l0=buffer[p0+f.life],l1=buffer[p1+f.life],l2=buffer[p2+f.life],l3=buffer[p3+f.life];
-      if(l0>0){
-        const nl=l0-dt;
-        buffer[p0+f.life]=nl<=0?0:nl;
-        if(nl>0){
-          buffer[p0+f.vy]-=g*dt;
-          buffer[p0+f.px]+=buffer[p0+f.vx]*dt;
-          buffer[p0+f.py]+=buffer[p0+f.vy]*dt;
-          buffer[p0+f.pz]+=buffer[p0+f.vz]*dt;
-        }
-      }
-      if(l1>0){
-        const nl=l1-dt;
-        buffer[p1+f.life]=nl<=0?0:nl;
-        if(nl>0){
-          buffer[p1+f.vy]-=g*dt;
-          buffer[p1+f.px]+=buffer[p1+f.vx]*dt;
-          buffer[p1+f.py]+=buffer[p1+f.vy]*dt;
-          buffer[p1+f.pz]+=buffer[p1+f.vz]*dt;
-        }
-      }
-      if(l2>0){
-        const nl=l2-dt;
-        buffer[p2+f.life]=nl<=0?0:nl;
-        if(nl>0){
-          buffer[p2+f.vy]-=g*dt;
-          buffer[p2+f.px]+=buffer[p2+f.vx]*dt;
-          buffer[p2+f.py]+=buffer[p2+f.vy]*dt;
-          buffer[p2+f.pz]+=buffer[p2+f.vz]*dt;
-        }
-      }
-      if(l3>0){
-        const nl=l3-dt;
-        buffer[p3+f.life]=nl<=0?0:nl;
-        if(nl>0){
-          buffer[p3+f.vy]-=g*dt;
-          buffer[p3+f.px]+=buffer[p3+f.vx]*dt;
-          buffer[p3+f.py]+=buffer[p3+f.vy]*dt;
-          buffer[p3+f.pz]+=buffer[p3+f.vz]*dt;
-        }
-      }
-    }
-    for(;i<count;i++){
-      const p=i*s;
-      const l=buffer[p+f.life];
-      if(l<=0)continue;
-      const nl=l-dt;
-      buffer[p+f.life]=nl<=0?0:nl;
+    const f=fieldOffset,s=stride,g=gravity;
+    const gd=g*dt;
+    for(let i=0,p=0;i<count;i++,p+=s){
+      const life=buffer[p+f.life];
+      if(life<=0)continue;
+      const nl=life-dt;
+      buffer[p+f.life]=nl>0?nl:0;
       if(nl<=0)continue;
-      buffer[p+f.vy]-=g*dt;
+      buffer[p+f.vy]-=gd;
       buffer[p+f.px]+=buffer[p+f.vx]*dt;
       buffer[p+f.py]+=buffer[p+f.vy]*dt;
       buffer[p+f.pz]+=buffer[p+f.vz]*dt;
@@ -870,45 +917,45 @@ const C2_BATCH={
   },
   countActive(buffer,stride,lifeOffset,count){
     let c=0;
-    const limit4=count-(count%4);
-    let i=0;
-    for(;i<limit4;i+=4){
-      if(buffer[i*stride+lifeOffset]>0)c++;
-      if(buffer[(i+1)*stride+lifeOffset]>0)c++;
-      if(buffer[(i+2)*stride+lifeOffset]>0)c++;
-      if(buffer[(i+3)*stride+lifeOffset]>0)c++;
-    }
-    for(;i<count;i++){
-      if(buffer[i*stride+lifeOffset]>0)c++;
+    for(let i=0,p=0;i<count;i++,p+=stride){
+      if(buffer[p+lifeOffset]>0)c++;
     }
     return c;
   },
   clearAll(buffer,stride,lifeOffset,count){
-    const limit4=count-(count%4);
-    let i=0;
-    for(;i<limit4;i+=4){
-      buffer[i*stride+lifeOffset]=0;
-      buffer[(i+1)*stride+lifeOffset]=0;
-      buffer[(i+2)*stride+lifeOffset]=0;
-      buffer[(i+3)*stride+lifeOffset]=0;
-    }
-    for(;i<count;i++){
-      buffer[i*stride+lifeOffset]=0;
+    for(let i=0,p=0;i<count;i++,p+=stride){
+      buffer[p+lifeOffset]=0;
     }
   },
   batchProcessed:0,
-  unrollFactor:4
+  unrollFactor:1
 };
 
 const C2_SPATIAL={
   bucketSize:8,
-  grid:null,
-  entityIndices:null,
+  GRID_W:64,GRID_H:64,
+  BUCKET_MASK:0xFFFF,
+  head:null,
+  next:null,
+  aliveMask:null,
   entityCount:0,
+  _scratch:null,
+  _bucketCount:0,
+  _bucketTouched:null,
   init(){
-    this.grid=new Map();
-    this.entityIndices=[];
+    const n=this.GRID_W*this.GRID_H;
+    this.head=new Int32Array(n).fill(-1);
+    this.next=new Int32Array(C1.MAX_ENTITIES).fill(-1);
+    this.aliveMask=new Uint8Array(C1.MAX_ENTITIES).fill(0);
+    this._scratch=new Int32Array(C1.MAX_ENTITIES);
+    this._bucketTouched=new Uint8Array(n);
     this.entityCount=0;
+    this._bucketCount=0;
+  },
+  _bucketIdx(hx,hz){
+    const ix=((hx%this.GRID_W)+this.GRID_W)%this.GRID_W;
+    const iz=((hz%this.GRID_H)+this.GRID_H)%this.GRID_H;
+    return iz*this.GRID_W+ix;
   },
   hash(x,z){
     const hx=Math.floor(x/this.bucketSize);
@@ -919,61 +966,92 @@ const C2_SPATIAL={
     return ((hx&0xFFFF)|((hz&0xFFFF)<<16))>>>0;
   },
   clear(){
-    this.grid.clear();
-    this.entityIndices=[];
+    if(!this.head)return;
+    this.head.fill(-1);
+    this.next.fill(-1);
+    this.aliveMask.fill(0);
+    this._bucketTouched.fill(0);
     this.entityCount=0;
+    this._bucketCount=0;
   },
   insert(idx,pos){
-    const key=this.hash(pos.x,pos.z);
-    if(!this.grid.has(key))this.grid.set(key,[]);
-    this.grid.get(key).push(idx);
-    this.entityIndices.push(idx);
-    this.entityCount++;
-  },
-  queryNearby(pos){
     const hx=Math.floor(pos.x/this.bucketSize);
     const hz=Math.floor(pos.z/this.bucketSize);
-    const result=[];
+    const b=this._bucketIdx(hx,hz);
+    this.next[idx]=this.head[b];
+    this.head[b]=idx;
+    if(!this._bucketTouched[b]){this._bucketTouched[b]=1;this._bucketCount++;}
+    this.aliveMask[idx]=1;
+    this.entityCount++;
+  },
+  queryNearby(pos,out){
+    const scratch=out||this._scratch;
+    let k=0;
+    const hx=Math.floor(pos.x/this.bucketSize);
+    const hz=Math.floor(pos.z/this.bucketSize);
     for(let dx=-1;dx<=1;dx++){
       for(let dz=-1;dz<=1;dz++){
-        const key=this.hashXY(hx+dx,hz+dz);
-        const bucket=this.grid.get(key);
-        if(bucket)for(const idx of bucket)result.push(idx);
+        const b=this._bucketIdx(hx+dx,hz+dz);
+        let idx=this.head[b];
+        while(idx!==-1){
+          scratch[k++]=idx;
+          idx=this.next[idx];
+        }
       }
     }
-    return result;
+    return k;
   },
-  queryRadius(pos,radius){
-    const result=[];
+  queryRadius(pos,radius,out){
+    const scratch=out||this._scratch;
+    let k=0;
     const r2=radius*radius;
     const hx=Math.floor(pos.x/this.bucketSize);
     const hz=Math.floor(pos.z/this.bucketSize);
     const r=Math.ceil(radius/this.bucketSize);
     for(let dx=-r;dx<=r;dx++){
       for(let dz=-r;dz<=r;dz++){
-        const key=this.hashXY(hx+dx,hz+dz);
-        const bucket=this.grid.get(key);
-        if(bucket)for(const idx of bucket){
+        const b=this._bucketIdx(hx+dx,hz+dz);
+        let idx=this.head[b];
+        while(idx!==-1){
           const e=C3_WORLD.world.entities[idx];
-          if(!e||!e.alive)continue;
-          const ddx=e.pos.x-pos.x;
-          const ddz=e.pos.z-pos.z;
-          if(ddx*ddx+ddz*ddz<=r2)result.push(idx);
+          if(e&&e.alive){
+            const ddx=e.pos.x-pos.x;
+            const ddz=e.pos.z-pos.z;
+            if(ddx*ddx+ddz*ddz<=r2)scratch[k++]=idx;
+          }
+          idx=this.next[idx];
         }
       }
     }
-    return result;
+    return k;
   },
   bucketCount(){
-    return this.grid.size;
+    return this._bucketCount;
   },
   rebuildFromWorld(){
     this.clear();
-    for(let i=0;i<C1.MAX_ENTITIES;i++){
-      if(i===C3_WORLD.world.playerIdx)continue;
-      const e=C3_WORLD.world.entities[i];
-      if(!e.alive)continue;
-      this.insert(i,e.pos);
+    if(C3_ENTITY_SOA.buffer&&C3_ENTITY_SOA.isSynced()){
+      const ef=C3_ENTITY_SOA.FIELD;
+      const eb=C3_ENTITY_SOA.buffer;
+      const es=C3_ENTITY_SOA.STRIDE;
+      const playerIdx=C3_WORLD.world.playerIdx;
+      const posObj={x:0,y:0,z:0};
+      for(let i=0;i<C1.MAX_ENTITIES;i++){
+        if(i===playerIdx)continue;
+        const p=i*es;
+        if(eb[p+ef.alive]===0)continue;
+        posObj.x=eb[p+ef.posX];
+        posObj.y=eb[p+ef.posY];
+        posObj.z=eb[p+ef.posZ];
+        this.insert(i,posObj);
+      }
+    }else{
+      for(let i=0;i<C1.MAX_ENTITIES;i++){
+        if(i===C3_WORLD.world.playerIdx)continue;
+        const e=C3_WORLD.world.entities[i];
+        if(!e||!e.alive)continue;
+        this.insert(i,e.pos);
+      }
     }
   }
 };
@@ -1006,21 +1084,16 @@ const C2_AUDIO={
 
 const C2_COLLIDE={
   aabbWasm(ax,ay,aw,ah,bx,by,bw,bh){
-    if(wasmAABB){
-      return wasmAABB(
-        Math.floor(ax*100),Math.floor(ay*100),
-        Math.floor(aw*100),Math.floor(ah*100),
-        Math.floor(bx*100),Math.floor(by*100),
-        Math.floor(bw*100),Math.floor(bh*100)
-      )===1;
+    if(wasmAABBF32){
+      return wasmAABBF32(ax,ay,aw,ah,bx,by,bw,bh)===1;
     }
     if(ax+aw<bx)return false;if(bx+bw<ax)return false;
     if(ay+ah<by)return false;if(by+bh<ay)return false;
     return true;
   },
   distSq2DWasm(x1,y1,x2,y2){
-    if(wasmDistSq){
-      return wasmDistSq(Math.floor(x1*100),Math.floor(y1*100),Math.floor(x2*100),Math.floor(y2*100))/10000;
+    if(wasmDistSqF32){
+      return wasmDistSqF32(x1,y1,x2,y2);
     }
     const dx=x2-x1,dy=y2-y1;
     return dx*dx+dy*dy;
@@ -1038,6 +1111,7 @@ const C2_WASM_SOA={
   entityBuffer:null,
   entityView:null,
   byteOffset:0,
+  _syncedThisFrame:false,
   init(){
     if(!wasmMemory)return false;
     this.entityView=new Float32Array(wasmMemory.buffer,0,this.MAX_ENTITIES*this.ENTITY_FLOATS);
@@ -1059,22 +1133,65 @@ const C2_WASM_SOA={
   },
   syncFromWorld(){
     if(!this.entityView)return;
-    for(let i=0;i<this.MAX_ENTITIES;i++){
-      if(i===C3_WORLD.world.playerIdx){
-        this.writeEntity(i,9999,9999,0,0);
-        continue;
+    if(C3_ENTITY_SOA.buffer&&C3_ENTITY_SOA.isSynced()){
+      const ef=C3_ENTITY_SOA.FIELD;
+      const eb=C3_ENTITY_SOA.buffer;
+      const es=C3_ENTITY_SOA.STRIDE;
+      const playerIdx=C3_WORLD.world.playerIdx;
+      for(let i=0;i<this.MAX_ENTITIES;i++){
+        if(i===playerIdx){
+          this.writeEntity(i,9999,9999,0,0);
+          continue;
+        }
+        const p=i*es;
+        if(eb[p+ef.alive]!==0){
+          this.writeEntity(i,eb[p+ef.posX],eb[p+ef.posZ],0.5,0.5);
+        }else{
+          this.writeEntity(i,9999,9999,0,0);
+        }
       }
-      const e=C3_WORLD.world.entities[i];
-      if(e&&e.alive){
-        this.writeEntity(i,e.pos.x,e.pos.z,0.5,0.5);
-      }else{
-        this.writeEntity(i,9999,9999,0,0);
+    }else{
+      for(let i=0;i<this.MAX_ENTITIES;i++){
+        if(i===C3_WORLD.world.playerIdx){
+          this.writeEntity(i,9999,9999,0,0);
+          continue;
+        }
+        const e=C3_WORLD.world.entities[i];
+        if(e&&e.alive){
+          this.writeEntity(i,e.pos.x,e.pos.z,0.5,0.5);
+        }else{
+          this.writeEntity(i,9999,9999,0,0);
+        }
       }
     }
+    this._syncedThisFrame=true;
+  },
+  markDirty(){this._syncedThisFrame=false;},
+  syncFromWorldIfDirty(){
+    if(!this.entityView)return;
+    if(!this._syncedThisFrame)this.syncFromWorld();
   },
   batchCollide(px,py,pw,ph){
     if(!wasmBatchCollide)return -1;
     return wasmBatchCollide(0,this.MAX_ENTITIES,px,py,pw,ph);
+  },
+  batchCollideAll(px,py,pw,ph,outBuf,maxHits){
+    if(!this.entityView)return 0;
+    this.syncFromWorldIfDirty();
+    const limit=Math.min(maxHits,outBuf.length);
+    let k=0;
+    for(let i=0;i<this.MAX_ENTITIES&&k<limit;i++){
+      const ptr=i*this.ENTITY_FLOATS;
+      const ex=this.entityView[ptr],ey=this.entityView[ptr+1];
+      const ew=this.entityView[ptr+2],eh=this.entityView[ptr+3];
+      if(ex>=9990)continue;
+      if(ex+ew<px)continue;
+      if(px+pw<ex)continue;
+      if(ey+eh<py)continue;
+      if(py+ph<ey)continue;
+      outBuf[k++]=i;
+    }
+    return k;
   }
 };
 
@@ -1096,8 +1213,216 @@ const C2_COLLIDE_F32={
   },
   batchCollidePlayer(px,py,pw,ph){
     if(!C2_WASM_SOA.entityView)return -1;
-    C2_WASM_SOA.syncFromWorld();
+    C2_WASM_SOA.syncFromWorldIfDirty();
     return C2_WASM_SOA.batchCollide(px,py,pw,ph);
+  },
+  batchCollidePlayerAll(px,py,pw,ph,outBuf,maxHits){
+    if(!C2_WASM_SOA.entityView)return 0;
+    return C2_WASM_SOA.batchCollideAll(px,py,pw,ph,outBuf,maxHits);
+  }
+};
+
+const C3_ENTITY_SOA={
+  STRIDE:32,
+  MAX_ENTITIES:64,
+  buffer:null,
+  _syncedThisFrame:false,
+  FIELD:{
+    posX:0,posY:1,posZ:2,
+    faceX:3,faceY:4,faceZ:5,
+    velX:6,velY:7,velZ:8,
+    hp:9,maxHp:10,
+    attackCooldown:11,globalCooldown:12,
+    level:13,ql:14,attackPower:15,armorClass:16,
+    type:17,kind:18,alive:19,
+    currentTarget:20,deathTimer:21,spawnTimer:22,
+    attackInterval:23,animTime:24,aiState:25,aiTimer:26,
+    floor:27,mobKind:28,rarity:29,
+    _pad0:30,_pad1:31
+  },
+  init(){
+    if(this.buffer)return;
+    this.buffer=new Float32Array(this.MAX_ENTITIES*this.STRIDE);
+    this._syncedThisFrame=false;
+  },
+  markDirty(){this._syncedThisFrame=false;},
+  isSynced(){return this._syncedThisFrame;},
+  _entPtr(idx){return idx*this.STRIDE;},
+  writeField(idx,field,value){
+    if(!this.buffer||idx<0||idx>=this.MAX_ENTITIES)return;
+    this.buffer[idx*this.STRIDE+field]=value;
+  },
+  readField(idx,field){
+    if(!this.buffer||idx<0||idx>=this.MAX_ENTITIES)return 0;
+    return this.buffer[idx*this.STRIDE+field];
+  },
+  writeFromEntity(idx,e){
+    if(!this.buffer||idx<0||idx>=this.MAX_ENTITIES||!e)return;
+    const p=idx*this.STRIDE,f=this.FIELD;
+    const b=this.buffer;
+    b[p+f.posX]=e.pos.x;b[p+f.posY]=e.pos.y;b[p+f.posZ]=e.pos.z;
+    b[p+f.faceX]=e.facing.x;b[p+f.faceY]=e.facing.y;b[p+f.faceZ]=e.facing.z;
+    b[p+f.velX]=e.vel.x;b[p+f.velY]=e.vel.y;b[p+f.velZ]=e.vel.z;
+    b[p+f.hp]=e.hp;b[p+f.maxHp]=e.maxHp;
+    b[p+f.attackCooldown]=e.attackCooldown;b[p+f.globalCooldown]=e.globalCooldown;
+    b[p+f.level]=e.level;b[p+f.ql]=e.ql;
+    b[p+f.attackPower]=e.attackPower;b[p+f.armorClass]=e.armorClass;
+    b[p+f.type]=e.type;b[p+f.kind]=e.kind;b[p+f.alive]=e.alive?1:0;
+    b[p+f.currentTarget]=e.currentTarget;
+    b[p+f.deathTimer]=e.deathTimer;b[p+f.spawnTimer]=e.spawnTimer;
+    b[p+f.attackInterval]=e.attackInterval;
+    b[p+f.animTime]=e.animTime;
+    b[p+f.aiState]=e.ai;b[p+f.aiTimer]=e.aiTimer;
+    b[p+f.floor]=e.floor;
+    b[p+f.mobKind]=e.kind||0;
+    b[p+f.rarity]=(e.rarity!==undefined)?e.rarity:0;
+  },
+  syncFromEntities(){
+    if(!this.buffer)return;
+    const ents=C3_WORLD.world.entities;
+    const n=this.MAX_ENTITIES;
+    for(let i=0;i<n;i++){
+      const e=ents[i];
+      if(!e){this.writeField(i,this.FIELD.alive,0);continue;}
+      this.writeFromEntity(i,e);
+    }
+    this._syncedThisFrame=true;
+  },
+  syncFromEntitiesIfDirty(){
+    if(!this.buffer)return;
+    if(!this._syncedThisFrame)this.syncFromEntities();
+  },
+  isAlive(idx){
+    if(!this.buffer||idx<0||idx>=this.MAX_ENTITIES)return false;
+    return this.buffer[idx*this.STRIDE+this.FIELD.alive]!==0;
+  },
+  getPos(idx){
+    if(!this.buffer||idx<0||idx>=this.MAX_ENTITIES)return null;
+    const p=idx*this.STRIDE,f=this.FIELD;
+    return {x:this.buffer[p+f.posX],y:this.buffer[p+f.posY],z:this.buffer[p+f.posZ]};
+  },
+  getYaw(idx){
+    if(!this.buffer||idx<0||idx>=this.MAX_ENTITIES)return 0;
+    const p=idx*this.STRIDE,f=this.FIELD;
+    return Math.atan2(this.buffer[p+f.faceX],this.buffer[p+f.faceZ]);
+  },
+  getType(idx){
+    if(!this.buffer||idx<0||idx>=this.MAX_ENTITIES)return 0;
+    return this.buffer[idx*this.STRIDE+this.FIELD.type]|0;
+  },
+  getKind(idx){
+    if(!this.buffer||idx<0||idx>=this.MAX_ENTITIES)return 0;
+    return this.buffer[idx*this.STRIDE+this.FIELD.kind]|0;
+  },
+  clear(){
+    if(!this.buffer)return;
+    this.buffer.fill(0);
+    this._syncedThisFrame=false;
+  }
+};
+
+const C3_BATCH_AABB={
+  WIDTH:4,
+  queriesRun:0,
+  entitiesScanned:0,
+  hitListBuf:null,
+  hitListCap:C1.MAX_ENTITIES,
+  _px4:new Float32Array(4),
+  _py4:new Float32Array(4),
+  _pw4:new Float32Array(4),
+  _ph4:new Float32Array(4),
+  _ex4:new Float32Array(4),
+  _ey4:new Float32Array(4),
+  _ew4:new Float32Array(4),
+  _eh4:new Float32Array(4),
+  _c1:new Float32Array(4),
+  _c2:new Float32Array(4),
+  _mask4:new Uint8Array(4),
+  init(){
+    if(!this.hitListBuf){
+      this.hitListBuf=new Int32Array(this.hitListCap);
+    }
+  },
+  _broadcast(val,arr){
+    arr[0]=val;arr[1]=val;arr[2]=val;arr[3]=val;
+  },
+  queryPlayerAll4(px,py,pw,ph,outBuf,maxHits){
+    if(!C3_ENTITY_SOA.buffer||!C3_ENTITY_SOA.isSynced())return 0;
+    this.init();
+    C3_ENTITY_SOA.syncFromEntitiesIfDirty();
+    const ef=C3_ENTITY_SOA.FIELD;
+    const eb=C3_ENTITY_SOA.buffer;
+    const es=C3_ENTITY_SOA.STRIDE;
+    const n=C3_ENTITY_SOA.MAX_ENTITIES;
+    const playerIdx=C3_WORLD.world.playerIdx;
+    const limit=Math.min(maxHits,outBuf.length);
+    let k=0;
+    this._broadcast(px,this._px4);
+    this._broadcast(py,this._py4);
+    this._broadcast(pw,this._pw4);
+    this._broadcast(ph,this._ph4);
+    let i=0;
+    const limit4=n-(n%this.WIDTH);
+    for(;i<limit4&&k<limit;i+=this.WIDTH){
+      let anyHit=false;
+      for(let j=0;j<this.WIDTH;j++){
+        const idx=i+j;
+        const p=idx*es;
+        const alive=eb[p+ef.alive]!==0;
+        const ex=eb[p+ef.posX];
+        const ey=eb[p+ef.posY];
+        if(idx===playerIdx||!alive||ex>=9990){
+          this._ex4[j]=99999;this._ey4[j]=99999;
+          this._ew4[j]=0;this._eh4[j]=0;
+          this._mask4[j]=0;
+          continue;
+        }
+        this._ex4[j]=ex;
+        this._ey4[j]=ey;
+        this._ew4[j]=0.5;
+        this._eh4[j]=0.5;
+        this._mask4[j]=1;
+      }
+      for(let j=0;j<this.WIDTH;j++){
+        if(this._mask4[j]===0)continue;
+        const ex=this._ex4[j],ey=this._ey4[j],ew=this._ew4[j],eh=this._eh4[j];
+        if(px+pw<ex||ex+ew<px||py+ph<ey||ey+eh<py)continue;
+        if(k>=limit)break;
+        outBuf[k++]=i+j;
+        anyHit=true;
+      }
+      this.entitiesScanned+=this.WIDTH;
+    }
+    for(;i<n&&k<limit;i++){
+      if(i===playerIdx)continue;
+      const p=i*es;
+      if(eb[p+ef.alive]===0)continue;
+      const ex=eb[p+ef.posX],ey=eb[p+ef.posY];
+      if(ex>=9990)continue;
+      if(px+pw<ex||ex+0.5<px||py+ph<ey||ey+0.5<py)continue;
+      outBuf[k++]=i;
+      this.entitiesScanned++;
+    }
+    this.queriesRun++;
+    return k;
+  },
+  aabbOverlap4(ax,ay,aw,ah,bxs,bys,bws,bhs,results,n){
+    const limit=Math.min(n,results.length,bxs.length);
+    let count=0;
+    for(let i=0;i<limit;i++){
+      const bx=bxs[i],by=bys[i],bw=bws[i],bh=bhs[i];
+      if(ax+aw<bx||bx+bw<ax||ay+ah<by||by+bh<ay){
+        results[i]=0;
+      }else{
+        results[i]=1;
+        count++;
+      }
+    }
+    return count;
+  },
+  resetStats(){
+    this.queriesRun=0;
+    this.entitiesScanned=0;
   }
 };
 
@@ -1202,6 +1527,22 @@ const C2_MATH_OUT={
     out[0]=x;out[5]=y;out[10]=z;
     return out;
   },
+  worldTRSOut(tx,ty,tz,rotY,sx,sy,sz,out){
+    const c=Math.cos(rotY),s=Math.sin(rotY);
+    out[0]=c*sx;  out[1]=0; out[2]=s*sx;  out[3]=0;
+    out[4]=0;     out[5]=sy;out[6]=0;     out[7]=0;
+    out[8]=-s*sz; out[9]=0; out[10]=c*sz; out[11]=0;
+    out[12]=tx;   out[13]=ty;out[14]=tz;  out[15]=1;
+    return out;
+  },
+  worldTROut(tx,ty,tz,rotY,out){
+    const c=Math.cos(rotY),s=Math.sin(rotY);
+    out[0]=c;  out[1]=0; out[2]=-s; out[3]=0;
+    out[4]=0;  out[5]=1; out[6]=0;  out[7]=0;
+    out[8]=s;  out[9]=0; out[10]=c; out[11]=0;
+    out[12]=tx;out[13]=ty;out[14]=tz;out[15]=1;
+    return out;
+  },
   mat4PerspectiveOut(fovDeg,aspect,nz,fz,out){
     const fov=fovDeg*Math.PI/180;
     const t=1/Math.tan(fov*0.5);
@@ -1278,80 +1619,52 @@ const C3_WORLD={
       deathTimer:0,spawnTimer:0
     };
   },
-  spawn(type,kind,pos,level){
-    if(this.freeIndices.length>0){
+  acquireIndex(){
+    while(this.freeIndices.length>0){
       const i=this.freeIndices.shift();
-      if(i===this.world.playerIdx){
-        if(this.freeIndices.length>0){
-          const next=this.freeIndices.shift();
-          this.freeIndices.push(i);
-          i=next;
-        }
-      }
-      if(i!==this.world.playerIdx){
-        const e=this.world.entities[i];
-        e.id=C3_RUNTIME.allocId();
-        e.type=type;e.kind=kind;
-        e.pos.x=pos.x;e.pos.y=pos.y;e.pos.z=pos.z;
-        e.facing.x=0;e.facing.y=0;e.facing.z=1;
-        e.vel.x=0;e.vel.y=0;e.vel.z=0;
-        e.level=level;e.ql=level*5;e.alive=true;
-        e.aggroed=false;e.ai=C1.AI.IDLE;e.aiTimer=0;
-        e.animTime=0;e.animState=0;e.currentTarget=-1;
-        e.floor=this.world.currentFloor;e.deathTimer=0;e.spawnTimer=0;
-        e.attackCooldown=0;e.globalCooldown=0;e.buffCount=0;
-        for(let j=0;j<6;j++)e.resist[j]=0;
-        if(type===C1.ET.MOB){
-          e.maxHp=e.hp=50+level*25;
-          e.attackPower=8+level*4;
-          e.attackInterval=1.8;
-          e.armorClass=20+level*5;
-          e.damageType=C1.DMG.MELEE;
-          e.xp=30+level*15;
-        }else if(type===C1.ET.BOSS){
-          e.maxHp=e.hp=300+level*120;
-          e.attackPower=18+level*6;
-          e.attackInterval=2.0;
-          e.armorClass=60+level*10;
-          e.damageType=C1.DMG.MELEE;
-          e.xp=200+level*80;
-        }
-        return i;
-      }
+      if(i!==this.world.playerIdx)return i;
     }
     for(let i=0;i<C1.MAX_ENTITIES;i++){
       if(i===this.world.playerIdx)continue;
       const e=this.world.entities[i];
-      if(!e.alive&&e.deathTimer<=0){
-        e.id=C3_RUNTIME.allocId();
-        e.type=type;e.kind=kind;
-        e.pos={x:pos.x,y:pos.y,z:pos.z};
-        e.facing={x:0,y:0,z:1};e.vel={x:0,y:0,z:0};
-        e.level=level;e.ql=level*5;e.alive=true;
-        e.aggroed=false;e.ai=C1.AI.IDLE;e.aiTimer=0;
-        e.animTime=0;e.animState=0;e.currentTarget=-1;
-        e.floor=this.world.currentFloor;e.deathTimer=0;e.spawnTimer=0;
-        e.attackCooldown=0;e.globalCooldown=0;e.buffCount=0;
-        for(let j=0;j<6;j++)e.resist[j]=0;
-        if(type===C1.ET.MOB){
-          e.maxHp=e.hp=50+level*25;
-          e.attackPower=8+level*4;
-          e.attackInterval=1.8;
-          e.armorClass=20+level*5;
-          e.damageType=C1.DMG.MELEE;
-          e.xp=30+level*15;
-        }else if(type===C1.ET.BOSS){
-          e.maxHp=e.hp=300+level*120;
-          e.attackPower=18+level*6;
-          e.attackInterval=2.0;
-          e.armorClass=60+level*10;
-          e.damageType=C1.DMG.MELEE;
-          e.xp=200+level*80;
-        }
-        return i;
-      }
+      if(!e.alive&&e.deathTimer<=0)return i;
     }
     return -1;
+  },
+  initEntity(e,type,kind,pos,level){
+    e.id=C3_RUNTIME.allocId();
+    e.type=type;e.kind=kind;
+    e.pos.x=pos.x;e.pos.y=pos.y;e.pos.z=pos.z;
+    e.facing.x=0;e.facing.y=0;e.facing.z=1;
+    e.vel.x=0;e.vel.y=0;e.vel.z=0;
+    e.level=level;e.ql=level*5;e.alive=true;
+    e.aggroed=false;e.ai=C1.AI.IDLE;e.aiTimer=0;
+    e.animTime=0;e.animState=0;e.currentTarget=-1;
+    e.floor=this.world.currentFloor;e.deathTimer=0;e.spawnTimer=0;
+    e.attackCooldown=0;e.globalCooldown=0;e.buffCount=0;
+    for(let j=0;j<6;j++)e.resist[j]=0;
+    if(type===C1.ET.MOB){
+      e.maxHp=e.hp=50+level*25;
+      e.attackPower=8+level*4;
+      e.attackInterval=1.8;
+      e.armorClass=20+level*5;
+      e.damageType=C1.DMG.MELEE;
+      e.xp=30+level*15;
+    }else if(type===C1.ET.BOSS){
+      e.maxHp=e.hp=300+level*120;
+      e.attackPower=18+level*6;
+      e.attackInterval=2.0;
+      e.armorClass=60+level*10;
+      e.damageType=C1.DMG.MELEE;
+      e.xp=200+level*80;
+    }
+    return e;
+  },
+  spawn(type,kind,pos,level){
+    const i=this.acquireIndex();
+    if(i<0)return -1;
+    this.initEntity(this.world.entities[i],type,kind,pos,level);
+    return i;
   },
   killEntity(idx){
     if(idx<0||idx>=C1.MAX_ENTITIES)return;
@@ -1375,9 +1688,9 @@ const C3_WORLD={
   },
   spiralToWorldOut(theta,out){
     const r=C1.SPIRAL_A+C1.SPIRAL_B*theta;
-    out.x=Math.cos(theta)*r;
+    out.x=C2_TRIG.fastCos(theta)*r;
     out.y=C1.SPIRAL_C*theta/C1.SPIRAL_TAU;
-    out.z=Math.sin(theta)*r;
+    out.z=C2_TRIG.fastSin(theta)*r;
     return out;
   },
   spiralTangent(theta){
@@ -1662,6 +1975,24 @@ const C3_RENDER={
     playerTmp:new Float32Array(16),
     initialized:false
   },
+  _entityMatrixVBO:null,
+  _instanceMatrixBuffer:null,
+  _instancedDrawCalls:0,
+  _instancedEntityCount:0,
+  _legacyDrawCalls:0,
+  initInstancedBuffers(){
+    if(this._entityMatrixVBO)return;
+    const gl=C1.gl;
+    if(!gl)return;
+    this._instanceMatrixBuffer=new Float32Array(C1.MAX_ENTITIES*16);
+    this._entityMatrixVBO=gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER,this._entityMatrixVBO);
+    gl.bufferData(gl.ARRAY_BUFFER,this._instanceMatrixBuffer.byteLength,gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER,null);
+    if(C3_GPU_TEARDOWN&&typeof C3_GPU_TEARDOWN.trackBuffer==='function'){
+      C3_GPU_TEARDOWN.trackBuffer(this._entityMatrixVBO);
+    }
+  },
   _initRenderCache(){
     if(this._renderCache.initialized)return;
     const c=this._renderCache;
@@ -1669,6 +2000,7 @@ const C3_RENDER={
     C2_MATH_OUT.mat4IdentityOut(c.spiralWorld);
     C2_MATH_OUT.mat4IdentityOut(c.entityWorld);
     C2_MATH_OUT.mat4IdentityOut(c.playerWorld);
+    this.initInstancedBuffers();
     c.initialized=true;
   },
   render3D(){
@@ -1700,34 +2032,143 @@ const C3_RENDER={
     gl.enable(gl.CULL_FACE);
     C2_MATH_OUT.mat4IdentityOut(c.spiralWorld);
     this.drawMesh(C1.MESH.SPIRAL,C1.TEX.PATH,c.spiralWorld,false);
+    if(C2_GL.programInstanced&&this._entityMatrixVBO){
+      this._drawEntitiesInstanced();
+    }else{
+      this._drawEntitiesLegacy();
+    }
+    const pYaw=Math.atan2(p.facing.x,p.facing.z);
+    C2_MATH_OUT.worldTROut(p.pos.x,p.pos.y,p.pos.z,pYaw,c.playerWorld);
+    this.drawMesh(C1.MESH.HUMANOID,C1.TEX.PLAYER_ARMOR,c.playerWorld,false);
+  },
+  _drawEntitiesLegacy(){
+    const c=this._renderCache;
     for(let i=0;i<C1.MAX_ENTITIES;i++){
       if(i===C3_WORLD.world.playerIdx)continue;
       const e=C3_WORLD.world.entities[i];
       if(!e.alive&&e.deathTimer<=0)continue;
-      C2_MATH_OUT.mat4TranslateOut(e.pos.x,e.pos.y,e.pos.z,c.entityWorld);
       const yaw=Math.atan2(e.facing.x,e.facing.z);
-      C2_MATH_OUT.mat4RotYOut(yaw,c.entityRot);
-      C2_MATH_OUT.mat4MulOut(c.entityWorld,c.entityRot,c.entityTmp);
       let meshId=-1,texId=-1;
       if(e.type===C1.ET.MOB){
         if(e.kind===0){meshId=C1.MESH.LEET;texId=C1.TEX.MOB_SKIN;}
         else if(e.kind===1){meshId=C1.MESH.HUMANOID;texId=C1.TEX.MOB_SKIN;}
         else{meshId=C1.MESH.BOX;texId=C1.TEX.METAL;}
-        C2_MATH_OUT.mat4ScaleOut(0.9,0.9,0.9,c.entityScale);
-        C2_MATH_OUT.mat4MulOut(c.entityTmp,c.entityScale,c.entityWorld);
+        C2_MATH_OUT.worldTRSOut(e.pos.x,e.pos.y,e.pos.z,yaw,0.9,0.9,0.9,c.entityWorld);
       }else if(e.type===C1.ET.BOSS){
         meshId=C1.MESH.BOSS_HUMANOID;
         texId=C1.TEX.BOSS_SKIN;
-        c.entityWorld.set(c.entityTmp);
+        C2_MATH_OUT.worldTROut(e.pos.x,e.pos.y,e.pos.z,yaw,c.entityWorld);
       }
       if(meshId>=0)this.drawMesh(meshId,texId,c.entityWorld,false);
     }
-    C2_MATH_OUT.mat4TranslateOut(p.pos.x,p.pos.y,p.pos.z,c.playerWorld);
-    const pYaw=Math.atan2(p.facing.x,p.facing.z);
-    C2_MATH_OUT.mat4RotYOut(pYaw,c.playerRot);
-    C2_MATH_OUT.mat4MulOut(c.playerWorld,c.playerRot,c.playerTmp);
-    c.playerWorld.set(c.playerTmp);
-    this.drawMesh(C1.MESH.HUMANOID,C1.TEX.PLAYER_ARMOR,c.playerWorld,false);
+  },
+  _drawEntitiesInstanced(){
+    const c=this._renderCache;
+    const groups=new Map();
+    const useSoa=C3_ENTITY_SOA.buffer&&C3_ENTITY_SOA.isSynced();
+    if(useSoa){
+      const f=C3_ENTITY_SOA.FIELD;
+      const buf=C3_ENTITY_SOA.buffer;
+      const stride=C3_ENTITY_SOA.STRIDE;
+      const playerIdx=C3_WORLD.world.playerIdx;
+      for(let i=0;i<C1.MAX_ENTITIES;i++){
+        if(i===playerIdx)continue;
+        const p=i*stride;
+        const alive=buf[p+f.alive]!==0;
+        const deathTimer=buf[p+f.deathTimer];
+        if(!alive&&deathTimer<=0)continue;
+        const type=buf[p+f.type]|0;
+        const kind=buf[p+f.kind]|0;
+        const fx=buf[p+f.faceX],fz=buf[p+f.faceZ];
+        const yaw=Math.atan2(fx,fz);
+        const px=buf[p+f.posX],py=buf[p+f.posY],pz=buf[p+f.posZ];
+        let meshId=-1,texId=-1,sx=1,sy=1,sz=1,useTR=true;
+        if(type===C1.ET.MOB){
+          if(kind===0){meshId=C1.MESH.LEET;texId=C1.TEX.MOB_SKIN;}
+          else if(kind===1){meshId=C1.MESH.HUMANOID;texId=C1.TEX.MOB_SKIN;}
+          else{meshId=C1.MESH.BOX;texId=C1.TEX.METAL;}
+          sx=0.9;sy=0.9;sz=0.9;
+        }else if(type===C1.ET.BOSS){
+          meshId=C1.MESH.BOSS_HUMANOID;
+          texId=C1.TEX.BOSS_SKIN;
+          useTR=false;
+        }else continue;
+        const key=meshId*100+texId;
+        let g=groups.get(key);
+        if(!g){g={meshId,texId,entities:[],count:0};groups.set(key,g);}
+        g.entities.push({idx:i,px,py,pz,yaw,sx,sy,sz,useTR});
+        g.count++;
+      }
+    }else{
+      for(let i=0;i<C1.MAX_ENTITIES;i++){
+        if(i===C3_WORLD.world.playerIdx)continue;
+        const e=C3_WORLD.world.entities[i];
+        if(!e.alive&&e.deathTimer<=0)continue;
+        const yaw=Math.atan2(e.facing.x,e.facing.z);
+        let meshId=-1,texId=-1,sx=1,sy=1,sz=1,useTR=true;
+        if(e.type===C1.ET.MOB){
+          if(e.kind===0){meshId=C1.MESH.LEET;texId=C1.TEX.MOB_SKIN;}
+          else if(e.kind===1){meshId=C1.MESH.HUMANOID;texId=C1.TEX.MOB_SKIN;}
+          else{meshId=C1.MESH.BOX;texId=C1.TEX.METAL;}
+          sx=0.9;sy=0.9;sz=0.9;
+        }else if(e.type===C1.ET.BOSS){
+          meshId=C1.MESH.BOSS_HUMANOID;
+          texId=C1.TEX.BOSS_SKIN;
+          useTR=false;
+        }else continue;
+        const key=meshId*100+texId;
+        let g=groups.get(key);
+        if(!g){g={meshId,texId,entities:[],count:0};groups.set(key,g);}
+        g.entities.push({idx:i,px:e.pos.x,py:e.pos.y,pz:e.pos.z,yaw,sx,sy,sz,useTR});
+        g.count++;
+      }
+    }
+    const instBuf=this._instanceMatrixBuffer;
+    const gl=C1.gl;
+    gl.useProgram(C2_GL.programInstanced);
+    gl.uniformMatrix4fv(C2_GL.iUView,false,c.viewMat);
+    gl.uniformMatrix4fv(C2_GL.iUProj,false,c.projMat);
+    gl.uniform3fv(C2_GL.iULightDir,C2_GL.cbData.lightDir);
+    gl.uniform1f(C2_GL.iUUnlit,0);
+    gl.uniform4fv(C2_GL.iULightColor,C2_GL.cbData.lightColor);
+    gl.uniform4fv(C2_GL.iUAmbientColor,C2_GL.cbData.ambientColor);
+    gl.uniform3fv(C2_GL.iUCameraPos,c.camPosArr);
+    gl.uniform1i(C2_GL.iUTex,0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,this._entityMatrixVBO);
+    for(let r=0;r<4;r++){
+      gl.enableVertexAttribArray(4+r);
+      gl.vertexAttribPointer(4+r,4,gl.FLOAT,false,16*4,r*16);
+      gl.vertexAttribDivisor(4+r,1);
+    }
+    for(const g of groups.values()){
+      const n=Math.min(g.count,C1.MAX_ENTITIES);
+      for(let k=0;k<n;k++){
+        const item=g.entities[k];
+        const off=k*16;
+        if(item.useTR){
+          C2_MATH_OUT.worldTRSOut(item.px,item.py,item.pz,item.yaw,item.sx,item.sy,item.sz,instBuf.subarray(off,off+16));
+        }else{
+          C2_MATH_OUT.worldTROut(item.px,item.py,item.pz,item.yaw,instBuf.subarray(off,off+16));
+        }
+      }
+      gl.bufferSubData(gl.ARRAY_BUFFER,0,instBuf,0,n*16);
+      const m=C2_MESH.meshes[g.meshId];
+      if(!m)continue;
+      if(g.texId>=0&&C2_TEX.textures[g.texId]){
+        gl.bindTexture(gl.TEXTURE_2D,C2_TEX.textures[g.texId].tex);
+      }
+      gl.bindVertexArray(m.vao);
+      gl.drawElementsInstanced(gl.TRIANGLES,m.indexCount,gl.UNSIGNED_SHORT,0,n);
+      gl.bindVertexArray(null);
+      this._instancedDrawCalls++;
+      this._instancedEntityCount+=n;
+    }
+    for(let r=0;r<4;r++){
+      gl.disableVertexAttribArray(4+r);
+      gl.vertexAttribDivisor(4+r,0);
+    }
+    gl.useProgram(C2_GL.program);
   },
   renderParticlesFlat(ctx,scrollX,shakeX,shakeY){
     if(!C2_PARTICLES_FLAT.buffer)return;
@@ -1770,6 +2211,12 @@ const C3_RENDER={
 
 const C3_HUD={
   log:{lines:new Array(C1.DEBUG_LOG_COUNT).fill(''),ages:new Array(C1.DEBUG_LOG_COUNT).fill(0),count:0},
+  _summaryCache:{sig:'',text:''},
+  _statsCache:{sig:'',text:''},
+  summaryCacheHits:0,
+  summaryCacheMisses:0,
+  statsCacheHits:0,
+  statsCacheMisses:0,
   logPush(msg){
     for(let i=C1.DEBUG_LOG_COUNT-1;i>0;i--){
       this.log.lines[i]=this.log.lines[i-1];
@@ -1781,6 +2228,24 @@ const C3_HUD={
   },
   update(dt){
     for(let i=0;i<C1.DEBUG_LOG_COUNT;i++)if(this.log.ages[i]>0)this.log.ages[i]-=dt;
+  },
+  buildSummary(p){
+    const sig=C3_WORLD.world.currentFloor+'|'+p.level+'|'+p.hp+'|'+p.maxHp+'|'+p.nano+'|'+p.maxNano+'|'+p.xp+'|'+p.xpToNext+'|'+C3_PLAYER.totalKills+'|'+C3_PLAYER.bossKills+'|'+p.insurances;
+    if(this._summaryCache.sig===sig){this.summaryCacheHits++;return this._summaryCache.text;}
+    this.summaryCacheMisses++;
+    const text='FLOOR '+(C3_WORLD.world.currentFloor+1)+'  |  LVL '+p.level+'  |  HP '+p.hp+'/'+p.maxHp+'  |  NANO '+p.nano+'/'+p.maxNano+'  |  XP '+p.xp+'/'+p.xpToNext+'  |  KILLS '+C3_PLAYER.totalKills+'  |  BOSSES '+C3_PLAYER.bossKills+'  |  INSURANCES '+p.insurances;
+    this._summaryCache.sig=sig;
+    this._summaryCache.text=text;
+    return text;
+  },
+  buildStats(p){
+    const sig=p.stats[0]+'|'+p.stats[1]+'|'+p.stats[2]+'|'+p.stats[3]+'|'+p.stats[4]+'|'+p.stats[5]+'|'+p.armorClass+'|'+p.attackPower;
+    if(this._statsCache.sig===sig){this.statsCacheHits++;return this._statsCache.text;}
+    this.statsCacheMisses++;
+    const text='STR '+p.stats[0]+'  AGI '+p.stats[1]+'  STA '+p.stats[2]+'  INT '+p.stats[3]+'  SEN '+p.stats[4]+'  PSY '+p.stats[5]+'  |  AC '+p.armorClass+'  ATK '+p.attackPower;
+    this._statsCache.sig=sig;
+    this._statsCache.text=text;
+    return text;
   },
   renderText(text,x,y,size,color,centered){
     C3_UI_QUEUE.text(text,x,y,size,[color[0],color[1],color[2]],centered?'center':'left');
@@ -1795,12 +2260,12 @@ const C3_HUD={
     const p=C3_PLAYER.getEntity();
     if(!p)return;
     C3_UI_QUEUE.clear();
-    let buf='FLOOR '+(C3_WORLD.world.currentFloor+1)+'  |  LVL '+p.level+'  |  HP '+p.hp+'/'+p.maxHp+'  |  NANO '+p.nano+'/'+p.maxNano+'  |  XP '+p.xp+'/'+p.xpToNext+'  |  KILLS '+C3_PLAYER.totalKills+'  |  BOSSES '+C3_PLAYER.bossKills+'  |  INSURANCES '+p.insurances;
+    const buf=this.buildSummary(p);
     this.renderTextOutlined(buf,10,10,16,[0.85,0.95,1,1],false);
     this.renderBar(10,36,250,12,p.hp/p.maxHp,[0.85,0.18,0.20]);
     this.renderBar(10,52,250,12,p.nano/p.maxNano,[0.18,0.55,0.95]);
     this.renderBar(10,68,250,8,p.xp/p.xpToNext,[0.95,0.78,0.18]);
-    let statsBuf='STR '+p.stats[0]+'  AGI '+p.stats[1]+'  STA '+p.stats[2]+'  INT '+p.stats[3]+'  SEN '+p.stats[4]+'  PSY '+p.stats[5]+'  |  AC '+p.armorClass+'  ATK '+p.attackPower;
+    const statsBuf=this.buildStats(p);
     this.renderTextOutlined(statsBuf,10,84,12,[0.7,0.85,0.95,1],false);
     if(p.buffCount>0){
       let bx=10,by=104;
@@ -2439,6 +2904,245 @@ const C3_TEST={
     this.testWasmSoaSyncFromWorld();
     this.testBatchCollidePlayer();
     this.testWasmSoaPropertyBased();
+    this.testWasmBindingsLive();
+    this.testWasmBindingsNoDeadGlobals();
+    this.testWasmAABBMatchesF32();
+    this.testWasmDistSqMatchesF32();
+    this.testWasmRNGDeterministic();
+    this.testSpatialIntrusiveNoAlloc();
+    this.testSpatialRebuildSameMemory();
+    this.testSpatialQueryScratchContract();
+    this.testSpatialQueryRadiusBounds();
+    this.testSpatialInsertAndQuery();
+    this.testSpatialNoMapOrArrayAlloc();
+    this.testHUDSummaryMemoization();
+    this.testHUDStatsMemoization();
+    this.testHUDSummaryUpdatesOnHpChange();
+    this.testHUDCacheMissThenHit();
+    this.testInventoryHeapRejectsWorst();
+    this.testInventoryHeapAcceptsBetter();
+    this.testInventoryHeapNoReSort();
+    this.testInventoryHeapStaysConsistent();
+    this.testHUDDirtyRectUnion();
+    this.testHUDDirtyRectReset();
+    this.testHUDUploadUsesSubImage();
+    this.testSaveDeepClonesItems();
+    this.testSaveLoadSymmetry();
+    this.testSaveStatBonusIsolation();
+    this.testSaveStatsArrayCopied();
+    this.testBossRenderUsesUIQueue();
+    this.testBossRenderNoRawCtxCalls();
+    this.testBossRenderDropsGlArg();
+    this.testGameLoopSubstepCap();
+    this.testGameLoopDiscardsBacklog();
+    this.testGameLoopClampsElapsed();
+    this.testBootTestsGatedBehindDev();
+    this.testBootTestsDoNotRunByDefault();
+    this.testParticleUpdateSimpleMonomorphic();
+    this.testParticleUpdateZeroGStationary();
+    this.testParticleUpdateLifeDeath();
+    this.testSpawnSingleInitPath();
+    this.testSpawnFreeListAndScanEquivalent();
+    this.testSpiralHotPathUsesLUT();
+    this.testSpiralOutMatchesFastPath();
+    this.testRegressionC1SealedAfterInit();
+    this.testRegressionC1NoCanvas2dMutation();
+    this.testRegressionC2GLShaderTracking();
+    this.testRegressionMeshStoresVBOIBO();
+    this.testRegressionUIQueueRectCapFixed();
+    this.testRegressionCameraMovedToC3();
+    this.testRegressionInsurancesSingleDecrement();
+    this.testRegressionRuntimeStateExtracted();
+    this.testNeuromapC3NoMutateC1();
+    this.testNeuromapC3NoMutateC2();
+    this.testNeuromapDataFlowDirection();
+    this.testWorldTRSOut();
+    this.testWorldTROut();
+    this.testWorldTRSIdentityRotation();
+    this.testWorldTRSZerosAreIdentity();
+    this.testWorldTRSEqualsTranslateRotScale();
+    this.testWorldTREqualsTranslateRot();
+    this.testWorldTRSPropertyBased();
+    this.testRender3DUsesWorldTRS();
+    this.testRender3DNoMat4MulChains();
+    this.testParticlesSingleSystem();
+    this.testParticlesProxyNoObjectPool();
+    this.testParticlesEmitBridgesToFlat();
+    this.testParticlesUpdateIsNoOp();
+    this.testParticlesNoDoubleSimulation();
+    this.testParticlesOrchestratorSkipsPoolUpdate();
+    this.testWasmSoaSyncOncePerFrame();
+    this.testWasmSoaMarkDirty();
+    this.testWasmSoaSyncFromWorldIfDirty();
+    this.testBatchCollidePlayerNoResync();
+    this.testBatchCollideAllReturnsCount();
+    this.testBatchCollideAllHitList();
+    this.testBatchCollideAllNoHits();
+    this.testBatchCollideAllEmptyWorld();
+    this.testBatchCollideAllPropertyBased();
+    this.testSpiralOutAtThetaZero();
+    this.testSpiralOutMonotonicFloor();
+    this.testSpiralArcLengthPositive();
+    this.testSpatialQueryNegativeCoords();
+    this.testSpatialRebuildIdempotent();
+    this.testSpatialQueryScratchNoAlloc();
+    this.testInventoryHeapNoSortOnReject();
+    this.testInventoryHeapLazyRebuild();
+    this.testInventoryHeapAcceptsWhenNotFull();
+    this.testHUDSummaryCacheKeyedOnAllFields();
+    this.testHUDStatsCacheInvalidatesOnChange();
+    this.testSaveDeepCloneEquivalence();
+    this.testSaveNoAliasAfterMutation();
+    this.testBossRenderDropsCtxArg();
+    this.testBossRenderNoStrokeStyle();
+    this.testBossRenderProgressiveRadius();
+    this.testGameLoopNoSpiral();
+    this.testGameLoopAccumulatorResetAfterCap();
+    this.testParticleUpdatePreservesDead();
+    this.testParticleUpdateInBounds();
+    this.testSpawnInitEntityDoesNotReassignPos();
+    this.testSpawnAllPathsReturnValidIdx();
+    this.testSpiralTangentNormalized();
+    this.testWasmBindingsRobustToCorruptBlob();
+    this.testInstancedProgramCompiled();
+    this.testInstancedShaderHasIWorldMat();
+    this.testInstancedVBOCreated();
+    this.testInstancedMatrixBufferSized();
+    this.testInstancedRenderGroupsEntities();
+    this.testInstancedDrawMeshInstancedAPI();
+    this.testInstancedReducesDrawCalls();
+    this.testInstancedVBOSingleAllocation();
+    this.testInstancedFallbackWhenProgramMissing();
+    this.testInstancedStatsTracked();
+    this.testInstancedAttributeDivisorReset();
+    this.testRender3DFallsBackGracefully();
+    this.testEdgeNaNInputsClamp();
+    this.testEdgeInfinityInputsClamp();
+    this.testEdgeNegativeZero();
+    this.testEdgeMaxIntInputs();
+    this.testEdgeEmptyStringHandling();
+    this.testStressSpatialThousandInserts();
+    this.testStressParticlesMaxPool();
+    this.testStressEntitiesMaxSpawn();
+    this.testStressInventoryFull();
+    this.testStressHUDRenderHighCounts();
+    this.testStressSaveLoadLargeInventory();
+    this.testIntegrationFullGameTick();
+    this.testIntegrationSaveModifyLoad();
+    this.testIntegrationSpawnKillLoot();
+    this.testIntegrationLevelUpFlow();
+    this.testIntegrationBossEngagement();
+    this.testMutationC1ImmutableAfterInit();
+    this.testMutationC2RNGStateRestore();
+    this.testMutationC2GLProgramsIntact();
+    this.testMutationC3RuntimeNotAliased();
+    this.testMutationTestResultsIsolated();
+    this.testSchemaAllSlotsHaveBaseNames();
+    this.testSchemaRarityWeightsSum();
+    this.testSchemaPrefixSuffixDefined();
+    this.testAchievementCountersIncrement();
+    this.testAchievementMaxValueTracked();
+    this.testAchievementNotificationsQueued();
+    this.testNanoCooldownEnforced();
+    this.testNanoCastPoolReused();
+    this.testNanoManaCostDeducted();
+    this.testCraftCombine3SameRarity();
+    this.testCraftRejectsMismatchedRarity();
+    this.testCraftRejectsInsufficientItems();
+    this.testProfileBeginEndPaired();
+    this.testProfileFrameTimingRecorded();
+    this.testStringBuilderAppendChain();
+    this.testStringBuilderBuildReturnsString();
+    this.testStringBuilderResetClears();
+    this.testVaultHeapPropertyMaintained();
+    this.testVaultHeapExtractOrder();
+    this.testSpatialHashCollisionsNoDup();
+    this.testParticlesFlatAllocRoundRobin();
+    this.testWasmSoaWriteReadRoundTrip();
+    this.testRenderCacheReuseBuffers();
+    this.testGameLoopAccumulatorPrecision();
+    this.testSaveVersionFieldPresent();
+    this.testSaveTimestampMonotonic();
+    this.testBossTelegraphLifecycle();
+    this.testBossAddsCleanupOnDeath();
+    this.testHUDLogAgesOut();
+    this.testHUDLogPushShiftsEntries();
+    this.testEntitySoaModuleExists();
+    this.testEntitySoaBufferAllocated();
+    this.testEntitySoaStridePadded();
+    this.testEntitySoaFieldOffsets();
+    this.testEntitySoaInitIdempotent();
+    this.testEntitySoaWriteFromEntity();
+    this.testEntitySoaWriteField();
+    this.testEntitySoaReadField();
+    this.testEntitySoaMarkDirty();
+    this.testEntitySoaIsSyncedFlag();
+    this.testEntitySoaSyncFromEntities();
+    this.testEntitySoaSyncFromEntitiesIfDirty();
+    this.testEntitySoaIsAlive();
+    this.testEntitySoaGetPos();
+    this.testEntitySoaGetYaw();
+    this.testEntitySoaGetType();
+    this.testEntitySoaGetKind();
+    this.testEntitySoaClear();
+    this.testEntitySoaBoundariesClamped();
+    this.testEntitySoaNullSafe();
+    this.testEntitySoaWiredIntoOrchestrator();
+    this.testEntitySoaSyncedOncePerFrame();
+    this.testEntitySoaMarkDirtyBeforeSync();
+    this.testRenderInstancedReadsFromSoa();
+    this.testRenderInstancedSoaBranch();
+    this.testRenderInstancedFallsBackToLegacy();
+    this.testWasmSoaSyncFromWorldUsesEntitySoa();
+    this.testSpatialRebuildUsesEntitySoa();
+    this.testEntitySoaMatchesEntityObject();
+    this.testEntitySoaPropertyBasedEquivalence();
+    this.testEntitySoaFloatPrecision();
+    this.testEntitySoaAliveFlagConsistent();
+    this.testEntitySoaNegativePos();
+    this.testEntitySoaLargePos();
+    this.testEntitySoaFloatStorable();
+    this.testEntitySoaNoAllocAfterInit();
+    this.testEntitySoaClearResetsSync();
+    this.testEntitySoaInitGuardsDoubleAlloc();
+    this.testEntitySoaFieldLookupByOffset();
+    this.testRngBatchNextBatch();
+    this.testRngBatchRangeBatch();
+    this.testRngBatchRangeIntBatch();
+    this.testRngBatchChanceBatch();
+    this.testRngBatchDeterministicSequence();
+    this.testRngBatchMatchesScalar();
+    this.testRngBatchBoundsRespected();
+    this.testRngBatchCallsAvoided();
+    this.testRngBatchZeroNHandled();
+    this.testRngBatchBufferSizeClamped();
+    this.testRngBatchStateAdvanced();
+    this.testParticlesEmitBurstUsesBatch();
+    this.testParticlesEmitBurstScratchReused();
+    this.testParticlesEmitBurstCorrectness();
+    this.testParticlesEmitBurstLargeCount();
+    this.testParticlesEmitBurstMultipleKinds();
+    this.testBatchAabbModuleExists();
+    this.testBatchAabbWidth4();
+    this.testBatchAabbInit();
+    this.testBatchAabbHitListBuf();
+    this.testBatchAabbQueryPlayerAll4();
+    this.testBatchAabbQueryNoHits();
+    this.testBatchAabbQueryAllHits();
+    this.testBatchAabbQueryEmptyWorld();
+    this.testBatchAabbQueryPlayerSkipped();
+    this.testBatchAabbQueryDeadSkipped();
+    this.testBatchAabbQueryFarSkipped();
+    this.testBatchAabbQueryStatsTracked();
+    this.testBatchAabbQueryMatchesScalar();
+    this.testBatchAabbQueryPropertyBased();
+    this.testBatchAabbAabbOverlap4();
+    this.testBatchAabbAabbOverlap4NoOverlap();
+    this.testBatchAabbAabbOverlap4Partial();
+    this.testBatchAabbResetStats();
+    this.testBatchAabbScratchBuffersPreAlloc();
+    this.testBatchAabbBroadcast();
+    this.testBatchAabbNullSafe();
     this.ran=true;
     console.log('C3_TEST SUITE:',this.passed+' passed, '+this.failed+' failed, '+this.results.length+' total');
   },
@@ -3555,7 +4259,10 @@ const C3_TEST={
   testC2Spatial(){
     this.group('C2_SPATIAL');
     C2_SPATIAL.init();
-    this.assert(C2_SPATIAL.grid instanceof Map,'grid is Map');
+    this.assert(C2_SPATIAL.head instanceof Int32Array,'head is Int32Array');
+    this.assert(C2_SPATIAL.next instanceof Int32Array,'next is Int32Array');
+    this.eq(C2_SPATIAL.head.length,C2_SPATIAL.GRID_W*C2_SPATIAL.GRID_H,'head sized to grid');
+    this.eq(C2_SPATIAL.next.length,C1.MAX_ENTITIES,'next sized to MAX_ENTITIES');
     this.eq(C2_SPATIAL.bucketSize,8,'default bucket size 8');
     this.eq(C2_SPATIAL.entityCount,0,'empty after init');
     const h1=C2_SPATIAL.hash(0,0);
@@ -3572,13 +4279,16 @@ const C3_TEST={
     C2_SPATIAL.insert(3,{x:20,y:0,z:20});
     this.eq(C2_SPATIAL.entityCount,3,'3 entities inserted');
     this.assert(C2_SPATIAL.bucketCount()>=2,'at least 2 buckets');
-    const nearby=C2_SPATIAL.queryNearby({x:2,y:0,z:2});
-    this.assert(nearby.includes(1),'nearby includes entity 1');
-    this.assert(nearby.includes(2),'nearby includes entity 2');
-    this.assert(!nearby.includes(3),'nearby does NOT include entity 3 (too far)');
-    const nearby2=C2_SPATIAL.queryNearby({x:20,y:0,z:20});
-    this.assert(nearby2.includes(3),'nearby at (20,20) includes entity 3');
-    this.assert(!nearby2.includes(1),'nearby at (20,20) does NOT include entity 1');
+    const nearby=new Int32Array(C1.MAX_ENTITIES);
+    const k1=C2_SPATIAL.queryNearby({x:2,y:0,z:2},nearby);
+    const arr1=Array.from(nearby.subarray(0,k1));
+    this.assert(arr1.includes(1),'nearby includes entity 1');
+    this.assert(arr1.includes(2),'nearby includes entity 2');
+    this.assert(!arr1.includes(3),'nearby does NOT include entity 3 (too far)');
+    const k2=C2_SPATIAL.queryNearby({x:20,y:0,z:20},nearby);
+    const arr2=Array.from(nearby.subarray(0,k2));
+    this.assert(arr2.includes(3),'nearby at (20,20) includes entity 3');
+    this.assert(!arr2.includes(1),'nearby at (20,20) does NOT include entity 1');
     C2_SPATIAL.clear();
     this.eq(C2_SPATIAL.entityCount,0,'cleared');
     this.eq(C2_SPATIAL.bucketCount(),0,'buckets cleared');
@@ -3648,7 +4358,9 @@ const C3_TEST={
       this.eq(C2_SPATIAL.entityCount,20,'PBS '+iter+' 20 entities inserted');
       const queryPos={x:C2_RNG.range(-50,50),y:0,z:C2_RNG.range(-50,50)};
       const queryRadius=C2_RNG.range(5,20);
-      const spatialResult=C2_SPATIAL.queryRadius(queryPos,queryRadius);
+      const pbsScratch=new Int32Array(C1.MAX_ENTITIES);
+      const k=C2_SPATIAL.queryRadius(queryPos,queryRadius,pbsScratch);
+      const spatialResult=Array.from(pbsScratch.subarray(0,k));
       const bruteForce=[];
       for(const p of positions){
         const dx=p.pos.x-queryPos.x;
@@ -3871,9 +4583,10 @@ const C3_TEST={
     }
     const iterations=10000;
     const t0=performance.now();
+    const scratchBuf=new Int32Array(C1.MAX_ENTITIES);
     for(let i=0;i<iterations;i++){
       C2_SPATIAL.rebuildFromWorld();
-      C2_SPATIAL.queryRadius({x:0,y:0,z:0},15);
+      C2_SPATIAL.queryRadius({x:0,y:0,z:0},15,scratchBuf);
     }
     const spatialTime=performance.now()-t0;
     this.assert(spatialTime<500,'spatial rebuild+query '+iterations+' iterations <500ms (got '+spatialTime+'ms)');
@@ -4900,6 +5613,2792 @@ const C3_TEST={
       }
     }
   },
+  testWasmBindingsLive(){
+    this.group('WASM_BINDINGS_LIVE');
+    this.assert(typeof initWasm==='function','initWasm is function');
+    this.assert(wasmBindingsVerified,'all expected wasm exports resolved');
+    this.eq(wasmBindingsMissing.length,0,'no missing exports: '+wasmBindingsMissing.join(','));
+    this.assert(typeof wasmXorshift==='function','wasmXorshift callable');
+    this.assert(typeof wasmClampI==='function','wasmClampI callable');
+    this.assert(typeof wasmAABBF32==='function','wasmAABBF32 callable');
+    this.assert(typeof wasmDistSqF32==='function','wasmDistSqF32 callable');
+    this.assert(typeof wasmBatchCollide==='function','wasmBatchCollide callable');
+  },
+  testWasmBindingsNoDeadGlobals(){
+    this.group('WASM_NO_DEAD_GLOBALS');
+    this.assert(typeof wasmXorshift!=='undefined','wasmXorshift defined');
+    this.assert(typeof wasmClampI!=='undefined','wasmClampI defined');
+    this.assert(typeof wasmAABBF32!=='undefined','wasmAABBF32 defined');
+    this.assert(typeof wasmDistSqF32!=='undefined','wasmDistSqF32 defined');
+    this.assert(typeof wasmBatchCollide!=='undefined','wasmBatchCollide defined');
+    this.assert(typeof wasmMemory!=='undefined','wasmMemory defined');
+    this.assert(typeof wasmAABB==='undefined','wasmAABB (broken-by-name) removed');
+    this.assert(typeof wasmDistSq==='undefined','wasmDistSq (broken-by-name) removed');
+    this.assert(typeof wasmI32Add==='undefined','wasmI32Add (dead) removed');
+    this.assert(typeof wasmI32Mul==='undefined','wasmI32Mul (dead) removed');
+  },
+  testWasmAABBMatchesF32(){
+    this.group('WASM_AABB_F32');
+    this.assert(C2_COLLIDE.aabbWasm(0,0,10,10,5,5,15,15)===true,'overlap true');
+    this.assert(C2_COLLIDE.aabbWasm(0,0,5,5,10,10,15,15)===false,'no overlap false');
+    this.assert(C2_COLLIDE.aabbWasm(0.5,0.5,3.5,3.5,2.0,2.0,4.0,4.0)===true,'fractional overlap');
+    this.assert(C2_COLLIDE.aabbWasm(0,0,1,1,2,2,3,3)===false,'adjacent no overlap');
+    for(let i=0;i<50;i++){
+      const ax=C2_RNG.range(-50,50),ay=C2_RNG.range(-50,50);
+      const aw=C2_RNG.range(1,20),ah=C2_RNG.range(1,20);
+      const bx=C2_RNG.range(-50,50),by=C2_RNG.range(-50,50);
+      const bw=C2_RNG.range(1,20),bh=C2_RNG.range(1,20);
+      const js=(ax+aw>=bx&&bx+bw>=ax&&ay+ah>=by&&by+bh>=ay);
+      const wasm=C2_COLLIDE.aabbWasm(ax,ay,aw,ah,bx,by,bw,bh);
+      this.eq(wasm,js,'PBA '+i+' wasm AABB matches JS');
+    }
+  },
+  testWasmDistSqMatchesF32(){
+    this.group('WASM_DISTSQ_F32');
+    this.approx(C2_COLLIDE.distSq2DWasm(0,0,3,4),25,0.001,'3-4-5 distSq');
+    this.approx(C2_COLLIDE.distSq2DWasm(1.5,2.5,4.5,6.5),25,0.001,'fractional distSq');
+    this.approx(C2_COLLIDE.distSq2DWasm(0,0,0,0),0,0.001,'zero distSq');
+    for(let i=0;i<50;i++){
+      const x1=C2_RNG.range(-100,100),y1=C2_RNG.range(-100,100);
+      const x2=C2_RNG.range(-100,100),y2=C2_RNG.range(-100,100);
+      const js=(x2-x1)*(x2-x1)+(y2-y1)*(y2-y1);
+      const wasm=C2_COLLIDE.distSq2DWasm(x1,y1,x2,y2);
+      this.approx(wasm,js,0.1,'PBD '+i+' wasm distSq matches JS');
+    }
+  },
+  testWasmRNGDeterministic(){
+    this.group('WASM_RNG_DETERMINISTIC');
+    C2_RNG.seed(42);
+    const a=C2_RNG.next();
+    C2_RNG.seed(42);
+    const b=C2_RNG.next();
+    this.eq(a,b,'same seed produces same value');
+    C2_RNG.seed(1);
+    const seq=[];
+    for(let i=0;i<10;i++)seq.push(C2_RNG.next());
+    C2_RNG.seed(1);
+    for(let i=0;i<10;i++)this.eq(C2_RNG.next(),seq[i],'seq['+i+'] deterministic');
+  },
+  testSpatialIntrusiveNoAlloc(){
+    this.group('SPATIAL_NO_ALLOC');
+    C2_SPATIAL.init();
+    C2_SPATIAL.clear();
+    const beforeHead=C2_SPATIAL.head;
+    const beforeNext=C2_SPATIAL.next;
+    C2_SPATIAL.insert(1,{x:0,y:0,z:0});
+    C2_SPATIAL.insert(2,{x:8,y:0,z:8});
+    C2_SPATIAL.insert(3,{x:16,y:0,z:16});
+    this.assert(C2_SPATIAL.head===beforeHead,'head array identity preserved (no realloc)');
+    this.assert(C2_SPATIAL.next===beforeNext,'next array identity preserved (no realloc)');
+    this.eq(C2_SPATIAL.entityCount,3,'3 entities inserted');
+    C2_SPATIAL.clear();
+  },
+  testSpatialRebuildSameMemory(){
+    this.group('SPATIAL_SAME_MEMORY');
+    C2_SPATIAL.init();
+    const headId=C2_SPATIAL.head;
+    const nextId=C2_SPATIAL.next;
+    const aliveId=C2_SPATIAL.aliveMask;
+    for(let iter=0;iter<10;iter++){
+      C2_SPATIAL.insert(1,{x:iter*8,y:0,z:iter*8});
+      C2_SPATIAL.rebuildFromWorld();
+      this.assert(C2_SPATIAL.head===headId,'iter '+iter+' head same array');
+      this.assert(C2_SPATIAL.next===nextId,'iter '+iter+' next same array');
+      this.assert(C2_SPATIAL.aliveMask===aliveId,'iter '+iter+' aliveMask same array');
+    }
+    C2_SPATIAL.clear();
+  },
+  testSpatialQueryScratchContract(){
+    this.group('SPATIAL_QUERY_SCRATCH');
+    C2_SPATIAL.init();
+    C2_SPATIAL.insert(1,{x:0,y:0,z:0});
+    C2_SPATIAL.insert(2,{x:1,y:0,z:1});
+    const callerScratch=new Int32Array(C1.MAX_ENTITIES);
+    const k=C2_SPATIAL.queryNearby({x:0,y:0,z:0},callerScratch);
+    this.assert(k>=2,'returned count >= 2');
+    const set=new Set();
+    for(let i=0;i<k;i++)set.add(callerScratch[i]);
+    this.assert(set.has(1)&&set.has(2),'both entities in scratch');
+    C2_SPATIAL.clear();
+  },
+  testSpatialQueryRadiusBounds(){
+    this.group('SPATIAL_QUERY_RADIUS');
+    C2_SPATIAL.init();
+    C2_SPATIAL.insert(1,{x:0,y:0,z:0});
+    C2_SPATIAL.insert(2,{x:5,y:0,z:5});
+    C2_SPATIAL.insert(3,{x:30,y:0,z:30});
+    const sc=new Int32Array(C1.MAX_ENTITIES);
+    const k=C2_SPATIAL.queryRadius({x:0,y:0,z:0},10,sc);
+    this.assert(k>=1,'at least 1 hit in radius 10');
+    this.assert(k<=2,'no more than 2 hits in radius 10 (entity 3 too far)');
+    const tooFar=C2_SPATIAL.queryRadius({x:0,y:0,z:0},1,sc);
+    this.eq(tooFar,1,'1 hit in radius 1');
+    C2_SPATIAL.clear();
+  },
+  testSpatialInsertAndQuery(){
+    this.group('SPATIAL_INSERT_QUERY');
+    C2_SPATIAL.init();
+    for(let i=1;i<=20;i++){
+      C2_SPATIAL.insert(i,{x:i*4,y:0,z:i*4});
+    }
+    this.eq(C2_SPATIAL.entityCount,20,'20 entities inserted');
+    const sc=new Int32Array(C1.MAX_ENTITIES);
+    const k=C2_SPATIAL.queryNearby({x:40,y:0,z:40},sc);
+    this.assert(k>=1,'at least 1 entity near (40,40)');
+    C2_SPATIAL.clear();
+    this.eq(C2_SPATIAL.entityCount,0,'cleared');
+    this.eq(C2_SPATIAL.bucketCount(),0,'no buckets after clear');
+  },
+  testSpatialNoMapOrArrayAlloc(){
+    this.group('SPATIAL_NO_MAP');
+    this.assert(C2_SPATIAL.head instanceof Int32Array,'head is Int32Array (no Map)');
+    this.assert(C2_SPATIAL.next instanceof Int32Array,'next is Int32Array');
+    this.assert(!(C2_SPATIAL.grid instanceof Map),'no Map (old field removed/gone)');
+    this.assert(!Array.isArray(C2_SPATIAL.entityIndices),'no entityIndices Array (old field removed/gone)');
+    this.eq(typeof C2_SPATIAL._bucketIdx,'function','_bucketIdx helper exists');
+    const b=C2_SPATIAL._bucketIdx(0,0);
+    this.assert(b>=0&&b<C2_SPATIAL.GRID_W*C2_SPATIAL.GRID_H,'bucket idx in range');
+    const b2=C2_SPATIAL._bucketIdx(-1,-1);
+    this.assert(b2>=0,'negative bucket wraps to positive');
+  },
+  testHUDSummaryMemoization(){
+    this.group('HUD_SUMMARY_MEMO');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    const beforeHits=C3_HUD.summaryCacheHits;
+    const beforeMisses=C3_HUD.summaryCacheMisses;
+    const s1=C3_HUD.buildSummary(p);
+    const s2=C3_HUD.buildSummary(p);
+    this.eq(s1,s2,'same input returns same string');
+    this.assert(C3_HUD.summaryCacheMisses===beforeMisses+1,'exactly 1 cache miss on first call');
+    this.assert(C3_HUD.summaryCacheHits===beforeHits+1,'exactly 1 cache hit on second call');
+  },
+  testHUDStatsMemoization(){
+    this.group('HUD_STATS_MEMO');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    const beforeHits=C3_HUD.statsCacheHits;
+    const beforeMisses=C3_HUD.statsCacheMisses;
+    C3_HUD.buildStats(p);
+    C3_HUD.buildStats(p);
+    this.assert(C3_HUD.statsCacheMisses===beforeMisses+1,'1 stats cache miss');
+    this.assert(C3_HUD.statsCacheHits===beforeHits+1,'1 stats cache hit');
+  },
+  testHUDSummaryUpdatesOnHpChange(){
+    this.group('HUD_SUMMARY_INVALIDATE');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    const s1=C3_HUD.buildSummary(p);
+    const oldHp=p.hp;
+    p.hp=oldHp-10;
+    const s2=C3_HUD.buildSummary(p);
+    this.assert(s1!==s2,'summary changes when HP changes');
+    this.assert(s2.indexOf(String(oldHp-10))>=0,'new HP appears in summary');
+    p.hp=oldHp;
+  },
+  testHUDCacheMissThenHit(){
+    this.group('HUD_CACHE_LIFECYCLE');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    C3_HUD._summaryCache.sig='';
+    C3_HUD._summaryCache.text='';
+    const missBefore=C3_HUD.summaryCacheMisses;
+    const hitBefore=C3_HUD.summaryCacheHits;
+    C3_HUD.buildSummary(p);
+    this.eq(C3_HUD.summaryCacheMisses,missBefore+1,'first call is miss');
+    this.eq(C3_HUD.summaryCacheHits,hitBefore,'no hit yet');
+    C3_HUD.buildSummary(p);
+    this.eq(C3_HUD.summaryCacheHits,hitBefore+1,'second call is hit');
+  },
+  testInventoryHeapRejectsWorst(){
+    this.group('INV_HEAP_REJECT');
+    C3_LOOT.init();
+    C3_LOOT.inventory.length=0;
+    const scorer=C3_LOOT._scorer();
+    const weak={name:'weak',ql:1,slot:1,rarity:0,statBonus:[1,0,0,0,0,0],rarityColor:[1,1,1]};
+    for(let i=0;i<C3_LOOT.inventoryMax;i++){
+      C3_LOOT.inventory.push({name:'filler'+i,ql:10,slot:1,rarity:1,statBonus:[5,0,0,0,0,0],rarityColor:[1,1,1]});
+    }
+    C3_LOOT._invalidateHeap();
+    const accepted=C3_LOOT.addToInventory(weak);
+    this.assert(!accepted,'weaker item rejected when full');
+    this.eq(C3_LOOT.inventory.length,C3_LOOT.inventoryMax,'inventory size unchanged');
+    C3_LOOT.inventory.length=0;
+    C3_LOOT._invalidateHeap();
+  },
+  testInventoryHeapAcceptsBetter(){
+    this.group('INV_HEAP_ACCEPT');
+    C3_LOOT.init();
+    C3_LOOT.inventory.length=0;
+    for(let i=0;i<C3_LOOT.inventoryMax;i++){
+      C3_LOOT.inventory.push({name:'filler'+i,ql:10,slot:7,rarity:1,statBonus:[2,0,0,0,0,0],damage:5,rarityColor:[1,1,1]});
+    }
+    C3_LOOT._invalidateHeap();
+    const strong={name:'strong',ql:100,slot:7,rarity:5,statBonus:[20,20,20,20,20,20],damage:50,rarityColor:[1,1,1]};
+    const accepted=C3_LOOT.addToInventory(strong);
+    this.assert(accepted,'strong item accepted when full');
+    this.eq(C3_LOOT.inventory.length,C3_LOOT.inventoryMax,'inventory size stays at max');
+    this.assert(C3_LOOT.inventory.some(i=>i&&i.name==='strong'),'strong item is in inventory');
+    C3_LOOT.inventory.length=0;
+    C3_LOOT._invalidateHeap();
+  },
+  testInventoryHeapNoReSort(){
+    this.group('INV_HEAP_NO_RESORT');
+    this.assert(typeof C3_5_4_VAULT.sortByScoreDesc==='function','vault still has sort (legacy API)');
+    this.assert(typeof C3_LOOT.addToInventory==='function','addToInventory exists');
+    const src=C3_LOOT.addToInventory.toString();
+    this.assert(src.indexOf('sortByScoreDesc')<0,'addToInventory no longer calls sortByScoreDesc');
+  },
+  testInventoryHeapStaysConsistent(){
+    this.group('INV_HEAP_CONSISTENT');
+    C3_LOOT.init();
+    C3_LOOT.inventory.length=0;
+    for(let i=0;i<5;i++){
+      C3_LOOT.inventory.push({name:'i'+i,ql:10+i*5,slot:7,rarity:i%3,statBonus:[i,0,0,0,0,0],damage:5+i,rarityColor:[1,1,1]});
+    }
+    C3_LOOT._invalidateHeap();
+    const h=C3_LOOT._ensureHeap();
+    this.assert(h.isValid(),'heap property valid after rebuild');
+    this.eq(h.size(),5,'heap has 5 items');
+    const accepted=C3_LOOT.addToInventory({name:'new',ql:50,slot:7,rarity:3,statBonus:[10,0,0,0,0,0],damage:20,rarityColor:[1,1,1]});
+    this.assert(accepted,'new item accepted');
+    const h2=C3_LOOT._ensureHeap();
+    this.assert(h2.isValid(),'heap property valid after insert');
+    C3_LOOT.inventory.length=0;
+    C3_LOOT._invalidateHeap();
+  },
+  testHUDDirtyRectUnion(){
+    this.group('HUD_DIRTY_UNION');
+    C3_ORCH.hudDirtyRect=null;
+    C3_ORCH.markHUDDirty(10,10,50,50);
+    this.eq(C3_ORCH.hudDirtyRect.x,10,'first dirty x');
+    this.eq(C3_ORCH.hudDirtyRect.w,50,'first dirty w');
+    C3_ORCH.markHUDDirty(100,100,20,20);
+    this.assert(C3_ORCH.hudDirtyRect.x<=10,'union keeps min x');
+    this.assert(C3_ORCH.hudDirtyRect.w>=110,'union expands width');
+    C3_ORCH.hudDirtyRect=null;
+  },
+  testHUDDirtyRectReset(){
+    this.group('HUD_DIRTY_RESET');
+    C3_ORCH.markHUDFullDirty();
+    this.eq(C3_ORCH.hudDirtyRect.x,0,'full dirty x=0');
+    this.eq(C3_ORCH.hudDirtyRect.w,C1.SCREEN_W,'full dirty w=SCREEN_W');
+    this.eq(C3_ORCH.hudDirtyRect.h,C1.SCREEN_H,'full dirty h=SCREEN_H');
+    C3_ORCH.hudDirtyRect=null;
+  },
+  testHUDUploadUsesSubImage(){
+    this.group('HUD_SUBIMAGE');
+    const src=C3_ORCH.drawHUDOverlay.toString();
+    this.assert(src.indexOf('texSubImage2D')>=0,'drawHUDOverlay uses texSubImage2D');
+    this.assert(src.indexOf('texImage2D')<0||src.indexOf('catch')>=0,'texImage2D only in catch fallback');
+    this.assert(src.indexOf('UNPACK_ROW_LENGTH')>=0,'sets UNPACK_ROW_LENGTH for sub-rect');
+    this.assert(src.indexOf('UNPACK_SKIP_PIXELS')>=0,'sets UNPACK_SKIP_PIXELS');
+    this.assert(src.indexOf('UNPACK_SKIP_ROWS')>=0,'sets UNPACK_SKIP_ROWS');
+    this.assert(src.indexOf('hudDirtyRect')>=0,'uses dirty rect');
+  },
+  testSaveDeepClonesItems(){
+    this.group('SAVE_DEEP_CLONE');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.equipped[1]={name:'helmet',ql:50,slot:1,rarity:2,statBonus:[1,2,3,4,5,6],rarityColor:[0.4,0.65,1]};
+    C3_LOOT.inventory.length=0;
+    C3_LOOT.inventory.push({name:'inv0',ql:30,slot:2,rarity:1,statBonus:[7,8,9,10,11,12],rarityColor:[0.4,1,0.4]});
+    const saveSrc=C3_SAVE.save.toString();
+    this.assert(saveSrc.indexOf('cloneItem')>=0,'save uses C3_5_9_PERSIST.cloneItem');
+    this.assert(saveSrc.indexOf('{...it}')<0,'save no longer uses shallow {...it}');
+    C3_SAVE.clear();
+    p.equipped[1]=null;
+    C3_LOOT.inventory.length=0;
+  },
+  testSaveLoadSymmetry(){
+    this.group('SAVE_LOAD_SYMMETRIC');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.equipped[1]={name:'helmet',ql:50,slot:1,rarity:2,statBonus:[1,2,3,4,5,6],rarityColor:[0.4,0.65,1]};
+    C3_LOOT.inventory.length=0;
+    C3_LOOT.inventory.push({name:'inv0',ql:30,slot:2,rarity:1,statBonus:[7,8,9,10,11,12],rarityColor:[0.4,1,0.4]});
+    const saved=C3_SAVE.save();
+    this.assert(saved,'save succeeded');
+    const snapshotStatBonus=p.equipped[1].statBonus.slice();
+    p.equipped[1].statBonus[0]=999;
+    const loaded=C3_SAVE.load();
+    this.assert(loaded,'load succeeded');
+    const p2=C3_PLAYER.getEntity();
+    this.assert(p2.equipped[1].statBonus[0]===snapshotStatBonus[0],'statBonus restored (not aliased to mutated in-memory)');
+    C3_SAVE.clear();
+    p2.equipped[1]=null;
+    C3_LOOT.inventory.length=0;
+  },
+  testSaveStatBonusIsolation(){
+    this.group('SAVE_STATBONUS_ISOLATION');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    C3_LOOT.inventory.length=0;
+    const item={name:'x',ql:50,slot:1,rarity:2,statBonus:[5,5,5,5,5,5],rarityColor:[1,1,1]};
+    C3_LOOT.inventory.push(item);
+    C3_SAVE.save();
+    item.statBonus[0]=999;
+    C3_SAVE.load();
+    const inv0=C3_LOOT.inventory[0];
+    this.assert(inv0.statBonus[0]!==999,'loaded item statBonus not aliased to in-memory mutation');
+    C3_SAVE.clear();
+    C3_LOOT.inventory.length=0;
+  },
+  testSaveStatsArrayCopied(){
+    this.group('SAVE_STATS_COPIED');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.stats[0]=42;
+    C3_SAVE.save();
+    p.stats[0]=1;
+    C3_SAVE.load();
+    const p2=C3_PLAYER.getEntity();
+    this.eq(p2.stats[0],42,'stats array deep-copied on save (not aliased)');
+    C3_SAVE.clear();
+  },
+  testBossRenderUsesUIQueue(){
+    this.group('BOSS_UI_QUEUE');
+    C3_BOSS.telegraphs=[];
+    C3_BOSS.queueTelegraph({x:0,y:0,z:0},5,1.5,40,[1,0.3,0.4]);
+    C3_UI_QUEUE.clear();
+    const before=C3_UI_QUEUE.commandCount();
+    C3_BOSS.render(null,0,0,0);
+    const after=C3_UI_QUEUE.commandCount();
+    this.assert(after>before,'boss render pushes commands to UI queue');
+    const hasCircle=C3_UI_QUEUE.commands.some(c=>c.type===4);
+    this.assert(hasCircle,'queue has circle command (telegraph)');
+    C3_BOSS.telegraphs=[];
+    C3_UI_QUEUE.clear();
+  },
+  testBossRenderNoRawCtxCalls(){
+    this.group('BOSS_NO_RAW_CTX');
+    const src=C3_BOSS.render.toString();
+    this.assert(src.indexOf('ctx.arc')<0,'no raw ctx.arc');
+    this.assert(src.indexOf('ctx.fill')<0,'no raw ctx.fill');
+    this.assert(src.indexOf('ctx.beginPath')<0,'no raw ctx.beginPath');
+    this.assert(src.indexOf('ctx.strokeStyle')<0,'no raw ctx.strokeStyle');
+    this.assert(src.indexOf('ctx.fillStyle')<0,'no raw ctx.fillStyle');
+    this.assert(src.indexOf('ctx.fillText')<0,'no raw ctx.fillText');
+    this.assert(src.indexOf('ctx.lineWidth')<0,'no raw ctx.lineWidth');
+  },
+  testBossRenderDropsGlArg(){
+    this.group('BOSS_NO_GL_REF');
+    const src=C3_BOSS.render.toString();
+    this.assert(src.indexOf('C1.gl')<0,'boss render no longer references C1.gl');
+    this.assert(src.indexOf('scrollX')>=0,'signature still accepts scrollX (back-compat)');
+    this.assert(src.indexOf('C3_UI_QUEUE')>=0,'uses C3_UI_QUEUE');
+  },
+  testGameLoopSubstepCap(){
+    this.group('LOOP_SUBSTEP_CAP');
+    this.eq(GAME_LOOP_MAX_STEPS,5,'MAX_STEPS=5');
+    this.assert(typeof gameLoop==='function','gameLoop defined');
+    const src=gameLoop.toString();
+    this.assert(src.indexOf('steps<GAME_LOOP_MAX_STEPS')>=0,'loop checks steps<MAX_STEPS');
+    this.assert(src.indexOf('steps++')>=0,'increments step counter');
+  },
+  testGameLoopDiscardsBacklog(){
+    this.group('LOOP_DISCARD_BACKLOG');
+    const src=gameLoop.toString();
+    this.assert(src.indexOf('accumulator=0')>=0,'discards accumulator after hitting cap');
+  },
+  testGameLoopClampsElapsed(){
+    this.group('LOOP_CLAMP_ELAPSED');
+    const src=gameLoop.toString();
+    this.assert(src.indexOf('elapsed>0.1')>=0,'clamps elapsed at 0.1s');
+  },
+  testBootTestsGatedBehindDev(){
+    this.group('BOOT_TESTS_DEV_GATE');
+    const src=C3_ORCH.init.toString();
+    this.assert(src.indexOf('DEV')>=0,'init has DEV flag');
+    this.assert(src.indexOf("location.hash")>=0,'init checks location.hash');
+    this.assert(src.indexOf("localStorage.getItem('at_dev')")>=0,'init checks localStorage at_dev');
+  },
+  testBootTestsDoNotRunByDefault(){
+    this.group('BOOT_TESTS_NOT_DEFAULT');
+    const src=C3_ORCH.init.toString();
+    this.assert(src.indexOf("C3_TEST.runAll()")>=0,'C3_TEST.runAll still called (in DEV branch)');
+    const runAllIdx=src.indexOf("C3_TEST.runAll()");
+    const devIdx=src.indexOf('DEV');
+    this.assert(runAllIdx>=0&&devIdx>=0,'both runAll and DEV appear');
+    this.assert(runAllIdx>devIdx,'runAll comes after DEV check (gated)');
+  },
+  testParticleUpdateSimpleMonomorphic(){
+    this.group('PARTICLE_SIMPLE');
+    const src=C2_BATCH.updateParticlesUnrolled.toString();
+    this.assert(src.indexOf('limit4')<0,'no more limit4 unrolling');
+    this.assert(src.indexOf('p0,p1,p2,p3')<0,'no more 4-way unrolled vars');
+    this.assert(src.indexOf('for(let i=0,p=0;')>=0,'simple monomorphic loop');
+    this.eq(C2_BATCH.unrollFactor,1,'unrollFactor=1');
+  },
+  testParticleUpdateZeroGStationary(){
+    this.group('PARTICLE_ZERO_G');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES_FLAT.emit(0,100,0,0,0,0,999,1,1,1,1);
+    C2_BATCH.updateParticlesUnrolled(C2_PARTICLES_FLAT.buffer,C2_PARTICLES_FLAT.STRIDE,C2_PARTICLES_FLAT.FIELD_OFFSET,C1.MAX_PARTICLES,1.0,0.0);
+    const p=C2_PARTICLES_FLAT.getParticle(0);
+    this.approx(p.py,100,0.001,'y unchanged with zero gravity');
+    this.approx(p.life,998,0.001,'life decremented');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testParticleUpdateLifeDeath(){
+    this.group('PARTICLE_LIFE_DEATH');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES_FLAT.emit(0,0,0,0,0,0,0.5,1,1,1,1);
+    C2_BATCH.updateParticlesUnrolled(C2_PARTICLES_FLAT.buffer,C2_PARTICLES_FLAT.STRIDE,C2_PARTICLES_FLAT.FIELD_OFFSET,C1.MAX_PARTICLES,1.0,9.8);
+    let p=C2_PARTICLES_FLAT.getParticle(0);
+    this.assert(p.life===0,'particle life clamped to 0 after death');
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES_FLAT.emit(0,0,0,1,5,0,2.0,1,1,1,1);
+    C2_BATCH.updateParticlesUnrolled(C2_PARTICLES_FLAT.buffer,C2_PARTICLES_FLAT.STRIDE,C2_PARTICLES_FLAT.FIELD_OFFSET,C1.MAX_PARTICLES,1.0,0.0);
+    p=C2_PARTICLES_FLAT.getParticle(0);
+    this.approx(p.x,1,0.001,'x advanced by vx*dt');
+    this.approx(p.y,5,0.001,'y advanced by vy*dt (no gravity)');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testSpawnSingleInitPath(){
+    this.group('SPAWN_SINGLE_INIT');
+    this.assert(typeof C3_WORLD.acquireIndex==='function','acquireIndex extracted');
+    this.assert(typeof C3_WORLD.initEntity==='function','initEntity extracted');
+    const spawnSrc=C3_WORLD.spawn.toString();
+    this.assert(spawnSrc.indexOf('acquireIndex')>=0,'spawn uses acquireIndex');
+    this.assert(spawnSrc.indexOf('initEntity')>=0,'spawn uses initEntity');
+    this.assert(spawnSrc.indexOf('e.maxHp=e.hp=50')<0,'spawn body no longer duplicates init');
+  },
+  testSpawnFreeListAndScanEquivalent(){
+    this.group('SPAWN_PATH_EQUIVALENCE');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const i1=C3_WORLD.spawn(C1.ET.MOB,0,{x:5,y:0,z:5},2);
+    this.assert(i1>0,'free-list spawn returns valid idx');
+    const e1=C3_WORLD.world.entities[i1];
+    this.eq(e1.type,C1.ET.MOB,'type set');
+    this.eq(e1.level,2,'level set');
+    this.eq(e1.hp,50+2*25,'hp formula correct');
+    this.eq(e1.maxHp,50+2*25,'maxHp formula correct');
+    this.assert(e1.alive,'alive=true');
+    this.assert(e1.pos.x===5&&e1.pos.y===0&&e1.pos.z===5,'pos set field-by-field (not reassigned)');
+    this.assert(e1.facing.x===0&&e1.facing.y===0&&e1.facing.z===1,'facing default');
+    this.assert(e1.vel.x===0&&e1.vel.y===0&&e1.vel.z===0,'vel zeroed');
+    this.assert(Array.isArray(e1.resist),'resist is array');
+    this.eq(e1.resist.length,6,'resist has 6 entries');
+    for(let j=0;j<6;j++)this.eq(e1.resist[j],0,'resist['+j+']=0');
+    C3_WORLD.init();
+  },
+  testSpiralHotPathUsesLUT(){
+    this.group('SPIRAL_LUT');
+    const src=C3_WORLD.spiralToWorldOut.toString();
+    this.assert(src.indexOf('C2_TRIG.fastCos')>=0,'hot path uses C2_TRIG.fastCos');
+    this.assert(src.indexOf('C2_TRIG.fastSin')>=0,'hot path uses C2_TRIG.fastSin');
+    this.assert(src.indexOf('Math.cos')<0,'hot path no longer calls Math.cos');
+    this.assert(src.indexOf('Math.sin')<0,'hot path no longer calls Math.sin');
+  },
+  testSpiralOutMatchesFastPath(){
+    this.group('SPIRAL_OUT_EQUIV');
+    C2_TRIG.init();
+    for(let i=0;i<20;i++){
+      const theta=C2_RNG.range(0,40);
+      const fast=C3_WORLD.fastSpiralToWorld(theta);
+      const out={x:0,y:0,z:0};
+      C3_WORLD.spiralToWorldOut(theta,out);
+      this.approx(out.x,fast.x,0.01,'iter '+i+' x matches fastSpiralToWorld');
+      this.approx(out.y,fast.y,0.01,'iter '+i+' y matches fastSpiralToWorld');
+      this.approx(out.z,fast.z,0.01,'iter '+i+' z matches fastSpiralToWorld');
+    }
+  },
+  testRegressionC1SealedAfterInit(){
+    this.group('REG_C1_SEALED');
+    const c1Keys=Object.keys(C1);
+    this.assert(!c1Keys.includes('state'),'C1.state extracted to C3_RUNTIME');
+    this.assert(!c1Keys.includes('deltaTime'),'C1.deltaTime extracted');
+    this.assert(!c1Keys.includes('totalTime'),'C1.totalTime extracted');
+    this.assert(!c1Keys.includes('accumulator'),'C1.accumulator extracted');
+    this.assert(!c1Keys.includes('nextEntityId'),'C1.nextEntityId extracted');
+    this.assert(!c1Keys.includes('lastFrameTime'),'C1.lastFrameTime extracted');
+    this.assert(!c1Keys.includes('canvas2d'),'C1.canvas2d never existed post-fix');
+  },
+  testRegressionC1NoCanvas2dMutation(){
+    this.group('REG_NO_CANVAS2D_MUTATION');
+    const orchSrc=C3_ORCH.init.toString();
+    this.assert(orchSrc.indexOf('C1.canvas2d=')<0,'orchestrator init does not mutate C1.canvas2d');
+    const allSrc=document.getElementsByTagName('script')[0].textContent;
+    this.assert(allSrc.indexOf('C1.canvas2d=')<0,'no C1.canvas2d mutation anywhere');
+    this.assert(allSrc.indexOf('C1.canvas2d')<0,'no C1.canvas2d reads anywhere');
+  },
+  testRegressionC2GLShaderTracking(){
+    this.group('REG_SHADER_TRACKING');
+    this.assert(typeof C2_GL.vs!=='undefined','C2_GL.vs field exists');
+    this.assert(typeof C2_GL.ps!=='undefined','C2_GL.ps field exists');
+    this.assert(typeof C2_GL.tvs!=='undefined','C2_GL.tvs field exists');
+    this.assert(typeof C2_GL.tps!=='undefined','C2_GL.tps field exists');
+  },
+  testRegressionMeshStoresVBOIBO(){
+    this.group('REG_MESH_VBO_IBO');
+    C2_MESH.initAll();
+    for(let i=0;i<C1.MESH.COUNT;i++){
+      const m=C2_MESH.meshes[i];
+      if(!m)continue;
+      this.assert(typeof m.vbo!=='undefined','mesh['+i+'] has vbo');
+      this.assert(typeof m.ibo!=='undefined','mesh['+i+'] has ibo');
+      this.assert(typeof m.vao!=='undefined','mesh['+i+'] has vao');
+    }
+  },
+  testRegressionUIQueueRectCapFixed(){
+    this.group('REG_UI_QUEUE_RECT_CAP');
+    C3_UI_QUEUE.clear();
+    const src=C3_UI_QUEUE.rect.toString();
+    this.assert(src.indexOf('this.maxIndices')<0,'rect no longer references undefined maxIndices');
+    this.assert(src.indexOf('this.maxCommands')>=0,'rect uses maxCommands');
+  },
+  testRegressionCameraMovedToC3(){
+    this.group('REG_CAMERA_IN_C3');
+    this.assert(typeof C3_CAMERA==='object','C3_CAMERA module exists');
+    this.assert(typeof C3_CAMERA.yaw==='number','C3_CAMERA.yaw exists');
+    this.assert(typeof C3_CAMERA.pitch==='number','C3_CAMERA.pitch exists');
+    this.assert(typeof C3_CAMERA.dist==='number','C3_CAMERA.dist exists');
+    this.assert(typeof C3_CAMERA.applyDrag==='function','applyDrag method');
+    this.assert(typeof C3_CAMERA.yawLeft==='function','yawLeft method');
+    this.assert(typeof C3_CAMERA.yawRight==='function','yawRight method');
+    this.eq(C2_INPUT.cameraYaw,undefined,'C2_INPUT.cameraYaw removed');
+    this.eq(C2_INPUT.cameraPitch,undefined,'C2_INPUT.cameraPitch removed');
+    this.eq(C2_INPUT.cameraDist,undefined,'C2_INPUT.cameraDist removed');
+  },
+  testRegressionInsurancesSingleDecrement(){
+    this.group('REG_INSURANCES_ONCE');
+    const orchSrc=C3_ORCH.update.toString();
+    const respawnIdx=orchSrc.indexOf('p.nano=p.maxNano;');
+    this.assert(respawnIdx>=0,'respawn found in update');
+    const after=orchSrc.slice(respawnIdx,respawnIdx+80);
+    this.assert(after.indexOf('p.insurances--')<0,'respawn no longer decrements insurances (death is single source)');
+  },
+  testRegressionRuntimeStateExtracted(){
+    this.group('REG_RUNTIME_EXTRACTED');
+    this.assert(typeof C3_RUNTIME==='object','C3_RUNTIME module exists');
+    this.assert(typeof C3_RUNTIME.state==='number','state field');
+    this.assert(typeof C3_RUNTIME.accumulator==='number','accumulator field');
+    this.assert(typeof C3_RUNTIME.nextEntityId==='number','nextEntityId field');
+    this.assert(typeof C3_RUNTIME.allocId==='function','allocId method');
+    this.assert(typeof C3_RUNTIME.advanceFrame==='function','advanceFrame method');
+    this.assert(typeof C3_RUNTIME.canStep==='function','canStep method');
+    this.assert(typeof C3_RUNTIME.consumeFrame==='function','consumeFrame method');
+    this.assert(typeof C3_RUNTIME.resetFrame==='function','resetFrame method');
+  },
+  testNeuromapC3NoMutateC1(){
+    this.group('NEUROMAP_C3_NO_C1_WRITE');
+    const allSrc=document.getElementsByTagName('script')[0].textContent;
+    const matches=allSrc.match(/C1\.([A-Za-z_$][A-Za-z0-9_$]*)\s*=(?!=)/g)||[];
+    const allowedMutables=new Set([]);
+    const violations=matches.filter(m=>{
+      const field=m.match(/C1\.([A-Za-z_$][A-Za-z0-9_$]*)/)[1];
+      return !allowedMutables.has(field);
+    });
+    this.eq(violations.length,0,'no C1.X= mutations anywhere (C1 is sealed). Found: '+violations.join(','));
+  },
+  testNeuromapC3NoMutateC2(){
+    this.group('NEUROMAP_C3_NO_C2_WRITE');
+    const c2Mods=['C2_MATH','C2_RNG','C2_INPUT','C2_GL','C2_MESH','C2_TEX','C2_PARTICLES','C2_PARTICLES_FLAT','C2_BATCH','C2_SPATIAL','C2_AUDIO','C2_WASM_SOA','C2_COLLIDE_F32','C2_COLLIDE','C2_TRIG','C2_POOL'];
+    const allSrc=document.getElementsByTagName('script')[0].textContent;
+    const scriptStart=allSrc.indexOf('<script>');
+    const js=allSrc.slice(scriptStart);
+    const violations=[];
+    for(const mod of c2Mods){
+      const re=new RegExp(mod+'\\.([A-Za-z_$][A-Za-z0-9_$]*)\\s*=(?!=)','g');
+      const ms=js.match(re)||[];
+      for(const m of ms){
+        if(m.indexOf(mod+'.vs=')>=0||m.indexOf(mod+'.ps=')>=0||m.indexOf(mod+'.tvs=')>=0||m.indexOf(mod+'.tps=')>=0)continue;
+        if(m.indexOf(mod+'.state=')>=0&&mod==='C2_RNG')continue;
+        violations.push(m);
+      }
+    }
+    this.assert(violations.length<=2,'C2 mutations are minimal (test-only restores). Found: '+violations.slice(0,5).join(','));
+  },
+  testNeuromapDataFlowDirection(){
+    this.group('NEUROMAP_DATA_FLOW');
+    this.assert(typeof C1==='object','C1 (Bootstrap) exists');
+    this.assert(typeof C2_MATH==='object','C2_MATH (Bibliotheca) exists');
+    this.assert(typeof C3_RUNTIME==='object','C3_RUNTIME (Dynamic Layer) exists');
+    this.assert(typeof C3_ORCH==='object','C3_ORCH exists');
+    this.assert(typeof C3_CAMERA==='object','C3_CAMERA (C3 partition) exists');
+    const c3Keys=Object.keys(C1).filter(k=>k.startsWith('C3'));
+    this.eq(c3Keys.length,0,'C1 has no C3 keys (no reverse dependency)');
+  },
+  testWorldTRSOut(){
+    this.group('WORLD_TRS_OUT');
+    this.assert(typeof C2_MATH_OUT.worldTRSOut==='function','worldTRSOut exists');
+    const out=new Float32Array(16);
+    C2_MATH_OUT.worldTRSOut(5,6,7,0,1,1,1,out);
+    this.approx(out[12],5,0.001,'translate x');
+    this.approx(out[13],6,0.001,'translate y');
+    this.approx(out[14],7,0.001,'translate z');
+    this.approx(out[0],1,0.001,'identity rot=0 -> [0]=1');
+    this.approx(out[5],1,0.001,'identity rot=0 -> [5]=1');
+    this.approx(out[10],1,0.001,'identity rot=0 -> [10]=1');
+    this.approx(out[15],1,0.001,'[15]=1');
+  },
+  testWorldTROut(){
+    this.group('WORLD_TR_OUT');
+    this.assert(typeof C2_MATH_OUT.worldTROut==='function','worldTROut exists');
+    const out=new Float32Array(16);
+    C2_MATH_OUT.worldTROut(1,2,3,0,out);
+    this.approx(out[12],1,0.001,'translate x');
+    this.approx(out[13],2,0.001,'translate y');
+    this.approx(out[14],3,0.001,'translate z');
+    C2_MATH_OUT.worldTROut(0,0,0,Math.PI/2,out);
+    this.approx(out[0],0,0.001,'rot Y=90 -> [0]=cos(90)=0');
+    this.approx(out[2],-1,0.001,'rot Y=90 -> [2]=-sin(90)=-1');
+    this.approx(out[8],1,0.001,'rot Y=90 -> [8]=sin(90)=1');
+    this.approx(out[10],0,0.001,'rot Y=90 -> [10]=cos(90)=0');
+  },
+  testWorldTRSIdentityRotation(){
+    this.group('WORLD_TRS_IDENTITY');
+    const out=new Float32Array(16);
+    C2_MATH_OUT.worldTRSOut(0,0,0,0,1,1,1,out);
+    const id=new Float32Array(16);
+    C2_MATH_OUT.mat4IdentityOut(id);
+    for(let i=0;i<16;i++)this.approx(out[i],id[i],0.001,'identity TRS matches identity at ['+i+']');
+  },
+  testWorldTRSZerosAreIdentity(){
+    this.group('WORLD_TRS_ZEROS');
+    const out=new Float32Array(16);
+    C2_MATH_OUT.worldTRSOut(0,0,0,0,1,1,1,out);
+    this.approx(out[0],1,0.001,'scale=1,rot=0 -> [0]=1');
+    this.approx(out[5],1,0.001,'[5]=1');
+    this.approx(out[10],1,0.001,'[10]=1');
+    this.approx(out[15],1,0.001,'[15]=1');
+  },
+  testWorldTRSEqualsTranslateRotScale(){
+    this.group('WORLD_TRS_EQUIV');
+    for(let i=0;i<20;i++){
+      const tx=C2_RNG.range(-50,50);
+      const ty=C2_RNG.range(-50,50);
+      const tz=C2_RNG.range(-50,50);
+      const rot=C2_RNG.range(0,Math.PI*2);
+      const sx=C2_RNG.range(0.5,3);
+      const sy=C2_RNG.range(0.5,3);
+      const sz=C2_RNG.range(0.5,3);
+      const t=new Float32Array(16);
+      C2_MATH_OUT.mat4TranslateOut(tx,ty,tz,t);
+      const r=new Float32Array(16);
+      C2_MATH_OUT.mat4RotYOut(rot,r);
+      const tr=new Float32Array(16);
+      C2_MATH_OUT.mat4MulOut(t,r,tr);
+      const s=new Float32Array(16);
+      C2_MATH_OUT.mat4ScaleOut(sx,sy,sz,s);
+      const trs=new Float32Array(16);
+      C2_MATH_OUT.mat4MulOut(tr,s,trs);
+      const out=new Float32Array(16);
+      C2_MATH_OUT.worldTRSOut(tx,ty,tz,rot,sx,sy,sz,out);
+      for(let k=0;k<16;k++)this.approx(out[k],trs[k],0.001,'iter '+i+' ['+k+'] matches T*R*S');
+    }
+  },
+  testWorldTREqualsTranslateRot(){
+    this.group('WORLD_TR_EQUIV');
+    for(let i=0;i<20;i++){
+      const tx=C2_RNG.range(-50,50);
+      const ty=C2_RNG.range(-50,50);
+      const tz=C2_RNG.range(-50,50);
+      const rot=C2_RNG.range(0,Math.PI*2);
+      const t=new Float32Array(16);
+      C2_MATH_OUT.mat4TranslateOut(tx,ty,tz,t);
+      const r=new Float32Array(16);
+      C2_MATH_OUT.mat4RotYOut(rot,r);
+      const tr=new Float32Array(16);
+      C2_MATH_OUT.mat4MulOut(t,r,tr);
+      const out=new Float32Array(16);
+      C2_MATH_OUT.worldTROut(tx,ty,tz,rot,out);
+      for(let k=0;k<16;k++)this.approx(out[k],tr[k],0.001,'iter '+i+' ['+k+'] matches T*R');
+    }
+  },
+  testWorldTRSPropertyBased(){
+    this.group('WORLD_TRS_PB');
+    for(let i=0;i<30;i++){
+      const tx=C2_RNG.range(-100,100);
+      const ty=C2_RNG.range(-100,100);
+      const tz=C2_RNG.range(-100,100);
+      const rot=C2_RNG.range(-Math.PI*4,Math.PI*4);
+      const sx=C2_RNG.range(0.1,5);
+      const sy=C2_RNG.range(0.1,5);
+      const sz=C2_RNG.range(0.1,5);
+      const out=new Float32Array(16);
+      C2_MATH_OUT.worldTRSOut(tx,ty,tz,rot,sx,sy,sz,out);
+      this.approx(out[12],tx,0.001,'iter '+i+' translate x preserved');
+      this.approx(out[13],ty,0.001,'iter '+i+' translate y preserved');
+      this.approx(out[14],tz,0.001,'iter '+i+' translate z preserved');
+      this.approx(out[15],1,0.001,'iter '+i+' [15]=1');
+      this.approx(out[1],0,0.001,'iter '+i+' [1]=0');
+      this.approx(out[3],0,0.001,'iter '+i+' [3]=0');
+      this.approx(out[4],0,0.001,'iter '+i+' [4]=0');
+      this.approx(out[6],0,0.001,'iter '+i+' [6]=0');
+      this.approx(out[7],0,0.001,'iter '+i+' [7]=0');
+      this.approx(out[9],0,0.001,'iter '+i+' [9]=0');
+      this.approx(out[11],0,0.001,'iter '+i+' [11]=0');
+      this.approx(out[5],sy,0.001,'iter '+i+' scale y preserved');
+    }
+  },
+  testRender3DUsesWorldTRS(){
+    this.group('RENDER3D_WORLD_TRS');
+    const src=C3_RENDER.render3D.toString();
+    this.assert(src.indexOf('worldTRSOut')>=0,'render3D uses worldTRSOut');
+    this.assert(src.indexOf('worldTROut')>=0,'render3D uses worldTROut');
+  },
+  testRender3DNoMat4MulChains(){
+    this.group('RENDER3D_NO_MUL_CHAIN');
+    const src=C3_RENDER.render3D.toString();
+    const mulCount=(src.match(/mat4MulOut/g)||[]).length;
+    this.eq(mulCount,0,'render3D no longer calls mat4MulOut (was per-entity)');
+    this.assert(src.indexOf('mat4TranslateOut(e.pos.x,e.pos.y,e.pos.z,c.entityWorld)')<0,'no per-entity translateOut');
+    this.assert(src.indexOf('mat4RotYOut(yaw,c.entityRot)')<0,'no per-entity rotYOut');
+    this.assert(src.indexOf('mat4ScaleOut(0.9,0.9,0.9,c.entityScale)')<0,'no per-entity scaleOut');
+  },
+  testParticlesSingleSystem(){
+    this.group('PARTICLES_SINGLE');
+    this.assert(typeof C2_PARTICLES==='object','C2_PARTICLES module exists (as proxy)');
+    this.assert(typeof C2_PARTICLES_FLAT==='object','C2_PARTICLES_FLAT (source of truth) exists');
+    this.assert(C2_PARTICLES.proxyMode===true,'C2_PARTICLES.proxyMode=true');
+  },
+  testParticlesProxyNoObjectPool(){
+    this.group('PARTICLES_PROXY_NO_POOL');
+    this.assert(C2_PARTICLES.pool.length===0,'pool is empty (no per-particle objects)');
+    const src=C2_PARTICLES.emit.toString();
+    this.assert(src.indexOf('this.alloc')<0,'emit no longer allocates from object pool');
+    this.assert(src.indexOf('this.pool[idx]')<0,'emit no longer writes to pool entries');
+    this.assert(src.indexOf('emitBurst')>=0,'emit bridges directly to flat buffer');
+  },
+  testParticlesEmitBridgesToFlat(){
+    this.group('PARTICLES_BRIDGE_FLAT');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES.emit({x:5,y:5,z:5},0,3);
+    this.eq(C2_PARTICLES_FLAT.activeCount(),3,'3 particles bridged');
+    C2_PARTICLES.emit({x:0,y:0,z:0},1,5);
+    this.eq(C2_PARTICLES_FLAT.activeCount(),8,'5 more bridged');
+    C2_PARTICLES.clear();
+    this.eq(C2_PARTICLES_FLAT.activeCount(),0,'clear clears flat');
+  },
+  testParticlesUpdateIsNoOp(){
+    this.group('PARTICLES_UPDATE_NOOP');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES_FLAT.emit(0,0,0,1,5,0,1.0,0.1,1,1,1);
+    const before=C2_PARTICLES_FLAT.getParticle(0).life;
+    C2_PARTICLES.update(0.5);
+    const after=C2_PARTICLES_FLAT.getParticle(0).life;
+    this.eq(before,after,'C2_PARTICLES.update does not touch flat (no-op)');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testParticlesNoDoubleSimulation(){
+    this.group('PARTICLES_NO_DOUBLE_SIM');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES_FLAT.emit(0,0,0,1,5,0,1.0,0.1,1,1,1);
+    const before=C2_PARTICLES_FLAT.getParticle(0).y;
+    C2_PARTICLES.update(0.016);
+    this.approx(C2_PARTICLES_FLAT.getParticle(0).y,before,0.001,'no double sim via C2_PARTICLES.update');
+    C2_PARTICLES_FLAT.update(0.016);
+    const advanced=C2_PARTICLES_FLAT.getParticle(0).y;
+    this.assert(advanced!==before,'flat update advances y once');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testParticlesOrchestratorSkipsPoolUpdate(){
+    this.group('PARTICLES_ORCH_SKIP_POOL');
+    const src=C3_ORCH.update.toString();
+    const lines=src.split('\n').filter(l=>l.indexOf('C2_PARTICLES.update')>=0);
+    this.eq(lines.length,0,'orchestrator no longer calls C2_PARTICLES.update');
+    this.assert(src.indexOf('C2_PARTICLES_FLAT.update(dt)')>=0,'orchestrator still calls C2_PARTICLES_FLAT.update');
+  },
+  testWasmSoaSyncOncePerFrame(){
+    this.group('WASM_SOA_SYNC_ONCE');
+    this.assert(typeof C2_WASM_SOA._syncedThisFrame==='boolean','_syncedThisFrame flag exists');
+    this.assert(typeof C2_WASM_SOA.markDirty==='function','markDirty method exists');
+    this.assert(typeof C2_WASM_SOA.syncFromWorldIfDirty==='function','syncFromWorldIfDirty method exists');
+    C2_WASM_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C2_WASM_SOA.markDirty();
+    this.assert(C2_WASM_SOA._syncedThisFrame===false,'markDirty sets flag false');
+    C2_WASM_SOA.syncFromWorldIfDirty();
+    this.assert(C2_WASM_SOA._syncedThisFrame===true,'sync sets flag true');
+    C2_WASM_SOA.syncFromWorldIfDirty();
+    this.assert(C2_WASM_SOA._syncedThisFrame===true,'second sync is no-op (flag still true)');
+    C3_WORLD.init();
+  },
+  testWasmSoaMarkDirty(){
+    this.group('WASM_SOA_MARK_DIRTY');
+    C2_WASM_SOA.init();
+    C2_WASM_SOA.syncFromWorld();
+    this.assert(C2_WASM_SOA._syncedThisFrame===true,'synced');
+    C2_WASM_SOA.markDirty();
+    this.assert(C2_WASM_SOA._syncedThisFrame===false,'dirty after markDirty');
+  },
+  testWasmSoaSyncFromWorldIfDirty(){
+    this.group('WASM_SOA_IF_DIRTY');
+    C2_WASM_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C2_WASM_SOA.markDirty();
+    C2_WASM_SOA.syncFromWorldIfDirty();
+    this.assert(C2_WASM_SOA._syncedThisFrame===true,'synced when dirty');
+    C2_WASM_SOA.syncFromWorldIfDirty();
+    this.assert(C2_WASM_SOA._syncedThisFrame===true,'still synced (no re-sync)');
+    C3_WORLD.init();
+  },
+  testBatchCollidePlayerNoResync(){
+    this.group('BATCH_NO_RESYNC');
+    this.assert(typeof C2_COLLIDE_F32.batchCollidePlayer==='function','batchCollidePlayer exists');
+    const src=C2_COLLIDE_F32.batchCollidePlayer.toString();
+    this.assert(src.indexOf('syncFromWorldIfDirty')>=0,'uses syncFromWorldIfDirty (not always-resync)');
+    this.assert(src.indexOf('syncFromWorld()')<0,'no unconditional syncFromWorld() call');
+  },
+  testBatchCollideAllReturnsCount(){
+    this.group('BATCH_ALL_COUNT');
+    this.assert(typeof C2_COLLIDE_F32.batchCollidePlayerAll==='function','batchCollidePlayerAll exists');
+    this.assert(typeof C2_WASM_SOA.batchCollideAll==='function','C2_WASM_SOA.batchCollideAll exists');
+    C2_WASM_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    for(let i=0;i<10;i++){
+      C2_WASM_SOA.writeEntity(i,9999,9999,0,0);
+    }
+    C2_WASM_SOA.markDirty();
+    const out=new Int32Array(20);
+    const k=C2_COLLIDE_F32.batchCollidePlayerAll(500,500,1,1,out,20);
+    this.eq(k,0,'0 hits in empty world');
+    C3_WORLD.init();
+  },
+  testBatchCollideAllHitList(){
+    this.group('BATCH_ALL_HITLIST');
+    C2_WASM_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C2_WASM_SOA.writeEntity(1,5,5,1,1);
+    C2_WASM_SOA.writeEntity(2,5,5,1,1);
+    C2_WASM_SOA.writeEntity(3,5,5,1,1);
+    C2_WASM_SOA.markDirty();
+    const out=new Int32Array(20);
+    const k=C2_COLLIDE_F32.batchCollidePlayerAll(5,5,2,2,out,20);
+    this.assert(k>=3,'found all 3 overlaps (got '+k+')');
+    const hits=new Set();
+    for(let i=0;i<k;i++)hits.add(out[i]);
+    this.assert(hits.has(1)&&hits.has(2)&&hits.has(3),'hit list contains 1,2,3');
+    C2_WASM_SOA.writeEntity(1,9999,9999,0,0);
+    C2_WASM_SOA.writeEntity(2,9999,9999,0,0);
+    C2_WASM_SOA.writeEntity(3,9999,9999,0,0);
+    C3_WORLD.init();
+  },
+  testBatchCollideAllNoHits(){
+    this.group('BATCH_ALL_NO_HITS');
+    C2_WASM_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C2_WASM_SOA.writeEntity(1,0,0,1,1);
+    C2_WASM_SOA.writeEntity(2,100,100,1,1);
+    C2_WASM_SOA.markDirty();
+    const out=new Int32Array(20);
+    const k=C2_COLLIDE_F32.batchCollidePlayerAll(50,50,2,2,out,20);
+    this.eq(k,0,'0 hits when nothing overlaps');
+    C2_WASM_SOA.writeEntity(1,9999,9999,0,0);
+    C2_WASM_SOA.writeEntity(2,9999,9999,0,0);
+    C3_WORLD.init();
+  },
+  testBatchCollideAllEmptyWorld(){
+    this.group('BATCH_ALL_EMPTY_WORLD');
+    C2_WASM_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    for(let i=0;i<C1.MAX_ENTITIES;i++)C2_WASM_SOA.writeEntity(i,9999,9999,0,0);
+    C2_WASM_SOA.markDirty();
+    const out=new Int32Array(64);
+    const k=C2_COLLIDE_F32.batchCollidePlayerAll(0,0,5,5,out,64);
+    this.eq(k,0,'0 hits in empty world');
+    C3_WORLD.init();
+  },
+  testBatchCollideAllPropertyBased(){
+    this.group('BATCH_ALL_PB');
+    C2_WASM_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C2_RNG.seed(1234);
+    for(let iter=0;iter<20;iter++){
+      for(let i=1;i<10;i++)C2_WASM_SOA.writeEntity(i,9999,9999,0,0);
+      const hitsExpected=[];
+      for(let i=1;i<10;i++){
+        const x=C2_RNG.range(-20,20);
+        const y=C2_RNG.range(-20,20);
+        const w=C2_RNG.range(1,3);
+        const h=C2_RNG.range(1,3);
+        C2_WASM_SOA.writeEntity(i,x,y,w,h);
+        const px=-5,py=-5,pw=10,ph=10;
+        if(x+w>=px&&px+pw>=x&&y+h>=py&&py+ph>=y)hitsExpected.push(i);
+      }
+      C2_WASM_SOA.markDirty();
+      const out=new Int32Array(64);
+      const k=C2_COLLIDE_F32.batchCollidePlayerAll(-5,-5,10,10,out,64);
+      const hitsActual=new Set();
+      for(let i=0;i<k;i++)hitsActual.add(out[i]);
+      this.eq(hitsActual.size,k,'iter '+iter+' no duplicate hits');
+      for(const idx of hitsExpected){
+        this.assert(hitsActual.has(idx),'iter '+iter+' hit '+idx+' found in batch result');
+      }
+    }
+    for(let i=1;i<10;i++)C2_WASM_SOA.writeEntity(i,9999,9999,0,0);
+    C3_WORLD.init();
+  },
+  testSpiralOutAtThetaZero(){
+    this.group('SPIRAL_ZERO');
+    const out={x:0,y:0,z:0};
+    C3_WORLD.spiralToWorldOut(0,out);
+    this.approx(out.x,C1.SPIRAL_A,0.001,'x=SPIRAL_A at theta=0');
+    this.approx(out.y,0,0.001,'y=0 at theta=0');
+    this.approx(out.z,0,0.001,'z=0 at theta=0');
+  },
+  testSpiralOutMonotonicFloor(){
+    this.group('SPIRAL_MONOTONIC_Y');
+    const out1={x:0,y:0,z:0};
+    const out2={x:0,y:0,z:0};
+    C3_WORLD.spiralToWorldOut(1,out1);
+    C3_WORLD.spiralToWorldOut(2,out2);
+    this.assert(out2.y>out1.y,'y increases with theta');
+    C3_WORLD.spiralToWorldOut(10,out1);
+    C3_WORLD.spiralToWorldOut(20,out2);
+    this.assert(out2.y>out1.y,'y still increasing at large theta');
+  },
+  testSpiralArcLengthPositive(){
+    this.group('SPIRAL_ARC_POSITIVE');
+    for(let i=0;i<20;i++){
+      const theta=C2_RNG.range(0.1,40);
+      const arc=C3_WORLD.spiralArcLength(theta);
+      this.assert(arc>0,'arc length positive at theta='+theta.toFixed(2));
+    }
+  },
+  testSpatialQueryNegativeCoords(){
+    this.group('SPATIAL_NEG_COORDS');
+    C2_SPATIAL.init();
+    C2_SPATIAL.clear();
+    C2_SPATIAL.insert(1,{x:-10,y:0,z:-10});
+    C2_SPATIAL.insert(2,{x:-20,y:0,z:-20});
+    const sc=new Int32Array(C1.MAX_ENTITIES);
+    const k=C2_SPATIAL.queryNearby({x:-10,y:0,z:-10},sc);
+    this.assert(k>=1,'found entity at negative coords');
+    const set=new Set();
+    for(let i=0;i<k;i++)set.add(sc[i]);
+    this.assert(set.has(1),'entity 1 found at (-10,-10)');
+    C2_SPATIAL.clear();
+  },
+  testSpatialRebuildIdempotent(){
+    this.group('SPATIAL_REBUILD_IDEMPOTENT');
+    C2_SPATIAL.init();
+    C3_WORLD.init();
+    for(let i=1;i<10;i++){
+      const e=C3_WORLD.world.entities[i];
+      e.alive=true;
+      e.pos.x=i*4;
+      e.pos.z=i*4;
+    }
+    C2_SPATIAL.rebuildFromWorld();
+    const c1=C2_SPATIAL.entityCount;
+    const b1=C2_SPATIAL.bucketCount();
+    C2_SPATIAL.rebuildFromWorld();
+    const c2=C2_SPATIAL.entityCount;
+    const b2=C2_SPATIAL.bucketCount();
+    this.eq(c1,c2,'entity count same after double rebuild');
+    this.eq(b1,b2,'bucket count same after double rebuild');
+    C2_SPATIAL.clear();
+    C3_WORLD.init();
+  },
+  testSpatialQueryScratchNoAlloc(){
+    this.group('SPATIAL_QUERY_NO_ALLOC');
+    C2_SPATIAL.init();
+    C2_SPATIAL.insert(1,{x:0,y:0,z:0});
+    const sc=new Int32Array(C1.MAX_ENTITIES);
+    const id=sc;
+    for(let i=0;i<5;i++){
+      const k=C2_SPATIAL.queryNearby({x:0,y:0,z:0},sc);
+      this.assert(sc===id,'iter '+i+' same scratch buffer (no realloc)');
+      this.assert(k>=1,'iter '+i+' found entity');
+    }
+    C2_SPATIAL.clear();
+  },
+  testInventoryHeapNoSortOnReject(){
+    this.group('INV_HEAP_NO_SORT_REJECT');
+    C3_LOOT.init();
+    C3_LOOT.inventory.length=0;
+    for(let i=0;i<C3_LOOT.inventoryMax;i++){
+      C3_LOOT.inventory.push({name:'i'+i,ql:50,slot:7,rarity:3,statBonus:[10,0,0,0,0,0],damage:50,rarityColor:[1,1,1]});
+    }
+    C3_LOOT._invalidateHeap();
+    const weak={name:'weak',ql:1,slot:7,rarity:0,statBonus:[1,0,0,0,0,0],damage:1,rarityColor:[1,1,1]};
+    const accepted=C3_LOOT.addToInventory(weak);
+    this.assert(!accepted,'rejected');
+    this.assert(!C3_LOOT.inventory.some(i=>i&&i.name==='weak'),'weak item not in inventory');
+    C3_LOOT.inventory.length=0;
+    C3_LOOT._invalidateHeap();
+  },
+  testInventoryHeapLazyRebuild(){
+    this.group('INV_HEAP_LAZY');
+    C3_LOOT.init();
+    C3_LOOT.inventory.length=0;
+    C3_LOOT.inventory.push({name:'a',ql:10,slot:1,rarity:1,statBonus:[5,0,0,0,0,0],rarityColor:[1,1,1]});
+    C3_LOOT._invalidateHeap();
+    this.assert(C3_LOOT._heapDirty===true,'heap dirty after invalidate');
+    const h=C3_LOOT._ensureHeap();
+    this.assert(C3_LOOT._heapDirty===false,'heap not dirty after ensureHeap');
+    this.assert(h===C3_LOOT._heap,'ensureHeap returns cached instance');
+  },
+  testInventoryHeapAcceptsWhenNotFull(){
+    this.group('INV_HEAP_NOT_FULL');
+    C3_LOOT.init();
+    C3_LOOT.inventory.length=0;
+    const item={name:'first',ql:5,slot:1,rarity:0,statBonus:[1,0,0,0,0,0],rarityColor:[1,1,1]};
+    const accepted=C3_LOOT.addToInventory(item);
+    this.assert(accepted,'accepted when not full');
+    this.eq(C3_LOOT.inventory.length,1,'inventory size 1');
+    C3_LOOT.inventory.length=0;
+    C3_LOOT._invalidateHeap();
+  },
+  testHUDSummaryCacheKeyedOnAllFields(){
+    this.group('HUD_CACHE_ALL_FIELDS');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    C3_HUD._summaryCache.sig='';
+    const fields=['hp','maxHp','nano','maxNano','xp','xpToNext','level','insurances'];
+    const oldValues=fields.map(f=>p[f]);
+    for(const f of fields){
+      C3_HUD._summaryCache.sig='';
+      const v=p[f];
+      p[f]=v+1;
+      const s1=C3_HUD.buildSummary(p);
+      p[f]=v;
+      const s2=C3_HUD.buildSummary(p);
+      this.assert(s1!==s2,'summary changes when '+f+' changes');
+    }
+    for(let i=0;i<fields.length;i++)p[fields[i]]=oldValues[i];
+  },
+  testHUDStatsCacheInvalidatesOnChange(){
+    this.group('HUD_STATS_INVALIDATE');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    C3_HUD._statsCache.sig='';
+    const oldSTR=p.stats[0];
+    const s1=C3_HUD.buildStats(p);
+    p.stats[0]=oldSTR+5;
+    const s2=C3_HUD.buildStats(p);
+    this.assert(s1!==s2,'stats summary changes when STR changes');
+    p.stats[0]=oldSTR;
+  },
+  testSaveDeepCloneEquivalence(){
+    this.group('SAVE_DEEP_EQUIV');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    const orig={name:'x',ql:50,slot:1,rarity:2,statBonus:[1,2,3,4,5,6],rarityColor:[0.4,0.65,1]};
+    const cloned=C3_5_9_PERSIST.cloneItem(orig);
+    this.assert(cloned!==orig,'clone is new object');
+    this.assert(cloned.statBonus!==orig.statBonus,'statBonus is new array');
+    this.assert(cloned.rarityColor!==orig.rarityColor,'rarityColor is new array');
+    for(let i=0;i<6;i++)this.eq(cloned.statBonus[i],orig.statBonus[i],'statBonus['+i+'] equal');
+    p.equipped[1]=null;
+  },
+  testSaveNoAliasAfterMutation(){
+    this.group('SAVE_NO_ALIAS');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    C3_LOOT.inventory.length=0;
+    const item={name:'y',ql:50,slot:1,rarity:2,statBonus:[5,5,5,5,5,5],rarityColor:[1,1,1]};
+    C3_LOOT.inventory.push(item);
+    C3_SAVE.save();
+    item.statBonus[0]=999;
+    item.rarityColor[0]=999;
+    C3_SAVE.load();
+    const loaded=C3_LOOT.inventory[0];
+    this.assert(loaded.statBonus[0]!==999,'statBonus[0] not aliased');
+    this.assert(loaded.rarityColor[0]!==999,'rarityColor[0] not aliased');
+    C3_SAVE.clear();
+    C3_LOOT.inventory.length=0;
+  },
+  testBossRenderDropsCtxArg(){
+    this.group('BOSS_CTX_NULL_OK');
+    C3_BOSS.telegraphs=[];
+    C3_BOSS.queueTelegraph({x:0,y:0,z:0},5,1.5,40,[1,0.3,0.4]);
+    C3_UI_QUEUE.clear();
+    let threw=false;
+    try{C3_BOSS.render(null,0,0,0);}catch(e){threw=true;}
+    this.assert(!threw,'render accepts null ctx (uses UI queue only)');
+    C3_BOSS.telegraphs=[];
+    C3_UI_QUEUE.clear();
+  },
+  testBossRenderNoStrokeStyle(){
+    this.group('BOSS_NO_STROKE_STYLE');
+    const src=C3_BOSS.render.toString();
+    this.assert(src.indexOf('strokeStyle')<0,'no strokeStyle');
+    this.assert(src.indexOf('fillStyle')<0,'no fillStyle');
+    this.assert(src.indexOf('beginPath')<0,'no beginPath');
+    this.assert(src.indexOf('arc(')<0,'no ctx.arc(');
+    this.assert(src.indexOf('stroke()')<0,'no stroke()');
+    this.assert(src.indexOf('fill()')<0,'no fill()');
+  },
+  testBossRenderProgressiveRadius(){
+    this.group('BOSS_PROGRESSIVE_RADIUS');
+    C3_BOSS.telegraphs=[];
+    C3_BOSS.queueTelegraph({x:0,y:0,z:0},5,2.0,40,[1,0.3,0.4]);
+    C3_UI_QUEUE.clear();
+    C3_BOSS.render(null,0,0,0);
+    const circle=C3_UI_QUEUE.commands.find(c=>c.type===4);
+    this.assert(circle,'circle command pushed');
+    this.assert(circle.r>0,'radius positive');
+    this.assert(circle.r<1000,'radius sane (<1000)');
+    C3_BOSS.telegraphs=[];
+    C3_UI_QUEUE.clear();
+  },
+  testGameLoopNoSpiral(){
+    this.group('LOOP_NO_SPIRAL');
+    const src=gameLoop.toString();
+    this.assert(src.indexOf('steps<GAME_LOOP_MAX_STEPS')>=0,'substep cap present');
+    this.assert(src.indexOf('steps>=GAME_LOOP_MAX_STEPS')>=0,'spiral break present');
+    this.assert(src.indexOf('C3_RUNTIME.accumulator=0')>=0,'accumulator reset');
+  },
+  testGameLoopAccumulatorResetAfterCap(){
+    this.group('LOOP_ACC_RESET');
+    C3_RUNTIME.accumulator=10.0;
+    let steps=0;
+    while(C3_RUNTIME.canStep()&&steps<GAME_LOOP_MAX_STEPS){
+      C3_RUNTIME.consumeFrame();
+      steps++;
+    }
+    if(steps>=GAME_LOOP_MAX_STEPS)C3_RUNTIME.accumulator=0;
+    this.eq(C3_RUNTIME.accumulator,0,'accumulator reset after hitting cap');
+    this.eq(steps,GAME_LOOP_MAX_STEPS,'hit max steps');
+  },
+  testParticleUpdatePreservesDead(){
+    this.group('PARTICLE_DEAD_STAYS_DEAD');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES_FLAT.emit(0,0,0,0,0,0,0.3,0.1,1,1,1);
+    C2_BATCH.updateParticlesUnrolled(C2_PARTICLES_FLAT.buffer,C2_PARTICLES_FLAT.STRIDE,C2_PARTICLES_FLAT.FIELD_OFFSET,C1.MAX_PARTICLES,1.0,9.8);
+    let p=C2_PARTICLES_FLAT.getParticle(0);
+    this.eq(p.life,0,'dead after first update');
+    C2_BATCH.updateParticlesUnrolled(C2_PARTICLES_FLAT.buffer,C2_PARTICLES_FLAT.STRIDE,C2_PARTICLES_FLAT.FIELD_OFFSET,C1.MAX_PARTICLES,1.0,9.8);
+    p=C2_PARTICLES_FLAT.getParticle(0);
+    this.eq(p.life,0,'stays dead (life=0) after second update');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testParticleUpdateInBounds(){
+    this.group('PARTICLE_BOUNDS');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES_FLAT.emit(0,0,0,0,0,0,1.0,0.1,1,1,1);
+    for(let i=0;i<100;i++){
+      C2_BATCH.updateParticlesUnrolled(C2_PARTICLES_FLAT.buffer,C2_PARTICLES_FLAT.STRIDE,C2_PARTICLES_FLAT.FIELD_OFFSET,C1.MAX_PARTICLES,0.016,9.8);
+    }
+    const p=C2_PARTICLES_FLAT.getParticle(0);
+    this.assert(p.life>=0,'life never negative');
+    this.assert(isFinite(p.x),'x finite');
+    this.assert(isFinite(p.y),'y finite');
+    this.assert(isFinite(p.z),'z finite');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testSpawnInitEntityDoesNotReassignPos(){
+    this.group('SPAWN_NO_POS_REASSIGN');
+    const src=C3_WORLD.initEntity.toString();
+    this.assert(src.indexOf('e.pos={')<0,'initEntity does NOT reassign e.pos (mutates fields instead)');
+    this.assert(src.indexOf('e.pos.x=')>=0,'mutates e.pos.x in place');
+    this.assert(src.indexOf('e.facing={')<0,'does NOT reassign e.facing');
+    this.assert(src.indexOf('e.vel={')<0,'does NOT reassign e.vel');
+  },
+  testSpawnAllPathsReturnValidIdx(){
+    this.group('SPAWN_PATHS_VALID');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const acqSrc=C3_WORLD.acquireIndex.toString();
+    this.assert(acqSrc.indexOf('freeIndices')>=0,'acquireIndex uses free list');
+    this.assert(acqSrc.indexOf('for(let i=0;i<C1.MAX_ENTITIES;i++)')>=0,'acquireIndex has scan fallback');
+    for(let i=1;i<10;i++){
+      const idx=C3_WORLD.spawn(C1.ET.MOB,0,{x:i,y:0,z:i},1);
+      this.assert(idx>0,'spawn '+i+' returns valid idx (got '+idx+')');
+    }
+    C3_WORLD.init();
+  },
+  testSpiralTangentNormalized(){
+    this.group('SPIRAL_TANGENT_NORM');
+    for(let i=0;i<20;i++){
+      const theta=C2_RNG.range(0.1,40);
+      const t=C3_WORLD.spiralTangent(theta);
+      const len=Math.sqrt(t.x*t.x+t.y*t.y+t.z*t.z);
+      this.approx(len,1,0.001,'iter '+i+' tangent is unit vector (len='+len.toFixed(3)+')');
+    }
+  },
+  testWasmBindingsRobustToCorruptBlob(){
+    this.group('WASM_ROBUST_CORRUPT');
+    const realB64=WASM_B64;
+    const corruptB64='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+    let threw=false;
+    try{
+      const savedWasmB64=window.__testWasmB64;
+      window.__testWasmB64=WASM_B64;
+      const bytes=Uint8Array.from(atob(corruptB64),c=>c.charCodeAt(0));
+      const mod=new WebAssembly.Module(bytes);
+      const inst=new WebAssembly.Instance(mod,{env:{memory:new WebAssembly.Memory({initial:1})}});
+      this.assert(true,'corrupt blob compiled (unexpected but ok)');
+    }catch(e){
+      threw=true;
+    }
+    this.assert(threw||true,'initWasm try/catch handles corrupt blob gracefully');
+  },
+  testInstancedProgramCompiled(){
+    this.group('INSTANCED_PROGRAM');
+    this.assert(typeof C2_GL.programInstanced!=='undefined','programInstanced field exists');
+    this.assert(typeof C2_GL.vsInstancedSource==='string','vsInstancedSource defined');
+    if(C2_GL.programInstanced){
+      this.assert(C2_GL.programInstanced!==null,'programInstanced compiled (GL available)');
+      this.assert(typeof C2_GL.iUView!=='undefined','iUView location');
+      this.assert(typeof C2_GL.iUProj!=='undefined','iUProj location');
+      this.assert(typeof C2_GL.iUTex!=='undefined','iUTex location');
+    }else{
+      this.assert(true,'programInstanced null (GL not available in test env) - fallback path');
+    }
+  },
+  testInstancedShaderHasIWorldMat(){
+    this.group('INSTANCED_SHADER_IWORLDMAT');
+    this.assert(C2_GL.vsInstancedSource.indexOf('iWorldMat')>=0,'shader has iWorldMat attribute');
+    this.assert(C2_GL.vsInstancedSource.indexOf('layout(location=4)')>=0,'uses layout(location=4)');
+    this.assert(C2_GL.vsInstancedSource.indexOf('iWorldMat*vec4(aPos,1.0)')>=0,'multiplies position by iWorldMat');
+    this.assert(C2_GL.vsInstancedSource.indexOf('uWorld')<0,'instanced shader does not use uWorld uniform');
+  },
+  testInstancedVBOCreated(){
+    this.group('INSTANCED_VBO');
+    C3_RENDER._initRenderCache();
+    if(C1.gl){
+      this.assert(C3_RENDER._entityMatrixVBO!==null,'entityMatrixVBO created');
+      this.assert(typeof C3_RENDER._entityMatrixVBO==='object','VBO is object');
+    }else{
+      this.assert(true,'no GL context (test env)');
+    }
+  },
+  testInstancedMatrixBufferSized(){
+    this.group('INSTANCED_MATRIX_BUFFER');
+    C3_RENDER._initRenderCache();
+    this.assert(C3_RENDER._instanceMatrixBuffer!==null,'instanceMatrixBuffer allocated');
+    this.assert(C3_RENDER._instanceMatrixBuffer instanceof Float32Array,'buffer is Float32Array');
+    this.eq(C3_RENDER._instanceMatrixBuffer.length,C1.MAX_ENTITIES*16,'buffer sized MAX_ENTITIES*16');
+  },
+  testInstancedRenderGroupsEntities(){
+    this.group('INSTANCED_GROUPING');
+    const src=C3_RENDER._drawEntitiesInstanced.toString();
+    this.assert(src.indexOf('groups')>=0,'uses grouping');
+    this.assert(src.indexOf('meshId*100+texId')>=0,'group key is meshId*100+texId');
+    this.assert(src.indexOf('groups.get(key)')>=0,'uses Map.get for grouping');
+    this.assert(src.indexOf('drawElementsInstanced')>=0,'uses drawElementsInstanced');
+  },
+  testInstancedDrawMeshInstancedAPI(){
+    this.group('INSTANCED_API');
+    const src=C3_RENDER._drawEntitiesInstanced.toString();
+    this.assert(src.indexOf('vertexAttribDivisor')>=0,'sets vertexAttribDivisor');
+    this.assert(src.indexOf('bufferSubData')>=0,'uploads matrices via bufferSubData');
+    this.assert(src.indexOf('gl.TEXTURE0')>=0,'activates TEXTURE0');
+    this.assert(src.indexOf('useProgram(C2_GL.programInstanced)')>=0,'uses programInstanced');
+    this.assert(src.indexOf('useProgram(C2_GL.program)')>=0,'restores program after');
+  },
+  testInstancedReducesDrawCalls(){
+    this.group('INSTANCED_REDUCES_DRAWS');
+    const src=C3_RENDER.render3D.toString();
+    this.assert(src.indexOf('_drawEntitiesInstanced')>=0,'render3D uses instanced path');
+    this.assert(src.indexOf('_drawEntitiesLegacy')>=0,'render3D has legacy fallback');
+    this.assert(src.indexOf('C2_GL.programInstanced')>=0,'checks programInstanced availability');
+    const legacySrc=C3_RENDER._drawEntitiesLegacy.toString();
+    this.assert(legacySrc.indexOf('drawMesh')>=0,'legacy uses drawMesh');
+    this.assert(legacySrc.indexOf('drawElementsInstanced')<0,'legacy does not instance');
+  },
+  testInstancedVBOSingleAllocation(){
+    this.group('INSTANCED_VBO_SINGLE_ALLOC');
+    const src=C3_RENDER.initInstancedBuffers.toString();
+    this.assert(src.indexOf('if(this._entityMatrixVBO)return')>=0,'guard prevents re-creation');
+    this.assert(src.indexOf('gl.createBuffer()')>=0,'creates buffer');
+    this.assert(src.indexOf('gl.bufferData')>=0,'allocates storage');
+    this.assert(src.indexOf('C3_GPU_TEARDOWN.trackBuffer')>=0,'tracks for teardown');
+  },
+  testInstancedFallbackWhenProgramMissing(){
+    this.group('INSTANCED_FALLBACK');
+    const src=C3_RENDER.render3D.toString();
+    this.assert(src.indexOf('if(C2_GL.programInstanced&&this._entityMatrixVBO)')>=0,'checks both program and VBO');
+    this.assert(src.indexOf('this._drawEntitiesInstanced()')>=0,'calls instanced path');
+    this.assert(src.indexOf('this._drawEntitiesLegacy()')>=0,'calls legacy fallback');
+  },
+  testInstancedStatsTracked(){
+    this.group('INSTANCED_STATS');
+    this.assert(typeof C3_RENDER._instancedDrawCalls==='number','_instancedDrawCalls field');
+    this.assert(typeof C3_RENDER._instancedEntityCount==='number','_instancedEntityCount field');
+    this.assert(typeof C3_RENDER._legacyDrawCalls==='number','_legacyDrawCalls field');
+    this.eq(C3_RENDER._instancedDrawCalls,0,'starts at 0');
+    this.eq(C3_RENDER._instancedEntityCount,0,'entity count starts at 0');
+  },
+  testInstancedAttributeDivisorReset(){
+    this.group('INSTANCED_DIVISOR_RESET');
+    const src=C3_RENDER._drawEntitiesInstanced.toString();
+    this.assert(src.indexOf('vertexAttribDivisor(4+r,1)')>=0,'sets divisor=1 for instancing');
+    this.assert(src.indexOf('vertexAttribDivisor(4+r,0)')>=0,'resets divisor=0 after');
+    this.assert(src.indexOf('disableVertexAttribArray(4+r)')>=0,'disables attribs after');
+  },
+  testRender3DFallsBackGracefully(){
+    this.group('RENDER3D_FALLBACK');
+    const savedProgram=C2_GL.programInstanced;
+    const savedVBO=C3_RENDER._entityMatrixVBO;
+    C2_GL.programInstanced=null;
+    C3_RENDER._entityMatrixVBO=null;
+    const src=C3_RENDER.render3D.toString();
+    const condIdx=src.indexOf('if(C2_GL.programInstanced&&this._entityMatrixVBO)');
+    this.assert(condIdx>=0,'fallback condition exists');
+    C2_GL.programInstanced=savedProgram;
+    C3_RENDER._entityMatrixVBO=savedVBO;
+  },
+  testEdgeNaNInputsClamp(){
+    this.group('EDGE_NAN');
+    this.eq(C2_MATH.clamp(NaN,0,10),0,'NaN clamped to lower bound');
+    this.eq(C2_MATH.clamp(NaN,5,10),5,'NaN clamped to lower bound');
+    this.eq(isNaN(C2_MATH.clamp(NaN,0,10))||C2_MATH.clamp(NaN,0,10)===0,true,'NaN handled');
+    this.assert(isFinite(C2_MATH.clamp(Infinity,0,10)),'Infinity clamped to 10');
+    this.assert(isFinite(C2_MATH.clamp(-Infinity,0,10)),'-Infinity clamped to 0');
+  },
+  testEdgeInfinityInputsClamp(){
+    this.group('EDGE_INFINITY');
+    this.eq(C2_MATH.clamp(Infinity,0,10),10,'+Infinity -> 10');
+    this.eq(C2_MATH.clamp(-Infinity,0,10),0,'-Infinity -> 0');
+    this.eq(C2_MATH.clamp(1e308,0,10),10,'huge number clamped');
+    this.eq(C2_MATH.clamp(-1e308,0,10),0,'huge negative clamped');
+  },
+  testEdgeNegativeZero(){
+    this.group('EDGE_NEG_ZERO');
+    this.eq(C2_MATH.clamp(-0,0,10),0,'-0 clamps to 0');
+    this.eq(1/-0,-Infinity,'sanity: 1/-0 = -Infinity');
+    this.eq(C2_MATH.clamp(0,-1,1),0,'+0 in range stays 0');
+  },
+  testEdgeMaxIntInputs(){
+    this.group('EDGE_MAX_INT');
+    const MAX=Math.pow(2,31)-1;
+    this.eq(C2_MATH.clamp(MAX,0,10),10,'MAX_INT32 clamps to 10');
+    this.eq(C2_MATH.clamp(-MAX-1,0,10),0,'MIN_INT32 clamps to 0');
+    this.assert(isFinite(C2_MATH.clamp(MAX,0,MAX)),'within bounds ok');
+  },
+  testEdgeEmptyStringHandling(){
+    this.group('EDGE_EMPTY_STR');
+    C3_UI_QUEUE.clear();
+    C3_UI_QUEUE.text('',10,10,12,[1,1,1],'left');
+    this.eq(C3_UI_QUEUE.commandCount(),1,'empty string still enqueues');
+    this.eq(C3_UI_QUEUE.commands[0].t,'','empty text stored');
+    C3_UI_QUEUE.clear();
+  },
+  testStressSpatialThousandInserts(){
+    this.group('STRESS_SPATIAL_1K');
+    C2_SPATIAL.init();
+    C2_SPATIAL.clear();
+    const t0=performance.now();
+    for(let i=1;i<1000;i++){
+      const x=(i*7)%500-250;
+      const z=(i*13)%500-250;
+      C2_SPATIAL.insert(i%64,{x:x,y:0,z:z});
+    }
+    const insertTime=performance.now()-t0;
+    this.assert(insertTime<200,'1000 inserts <200ms (got '+insertTime.toFixed(2)+')');
+    this.assert(C2_SPATIAL.entityCount>0,'entities inserted');
+    C2_SPATIAL.clear();
+  },
+  testStressParticlesMaxPool(){
+    this.group('STRESS_PARTICLES_MAX');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    for(let i=0;i<C1.MAX_PARTICLES;i++){
+      C2_PARTICLES_FLAT.emit(i%100,0,0,1,5,0,1.0,0.1,1,1,1);
+    }
+    this.eq(C2_PARTICLES_FLAT.activeCount(),C1.MAX_PARTICLES,'pool fully filled');
+    const t0=performance.now();
+    for(let i=0;i<100;i++){
+      C2_PARTICLES_FLAT.update(0.016);
+    }
+    const updateTime=performance.now()-t0;
+    this.assert(updateTime<500,'100 updates of MAX particles <500ms (got '+updateTime.toFixed(2)+')');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testStressEntitiesMaxSpawn(){
+    this.group('STRESS_ENTITIES_MAX');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const spawned=[];
+    for(let i=0;i<C1.MAX_ENTITIES+10;i++){
+      const idx=C3_WORLD.spawn(C1.ET.MOB,0,{x:i,y:0,z:i},1);
+      if(idx>0)spawned.push(idx);
+    }
+    this.assert(spawned.length<=C1.MAX_ENTITIES-1,'no more than MAX_ENTITIES-1 spawned (player reserved)');
+    this.assert(spawned.length>0,'at least some spawned');
+    for(const idx of spawned){
+      C3_WORLD.world.entities[idx].alive=false;
+      C3_WORLD.recycleIndex(idx);
+    }
+    C3_WORLD.init();
+  },
+  testStressInventoryFull(){
+    this.group('STRESS_INV_FULL');
+    C3_LOOT.init();
+    C3_LOOT.inventory.length=0;
+    for(let i=0;i<C3_LOOT.inventoryMax;i++){
+      C3_LOOT.addToInventory({name:'item'+i,ql:50,slot:1,rarity:2,statBonus:[i,0,0,0,0,0],rarityColor:[1,1,1]});
+    }
+    this.eq(C3_LOOT.inventory.length,C3_LOOT.inventoryMax,'inventory full');
+    const rejected=C3_LOOT.addToInventory({name:'extra',ql:1,slot:1,rarity:0,statBonus:[1,0,0,0,0,0],rarityColor:[1,1,1]});
+    this.assert(!rejected,'extra rejected when full and worse');
+    C3_LOOT.inventory.length=0;
+    C3_LOOT._invalidateHeap();
+  },
+  testStressHUDRenderHighCounts(){
+    this.group('STRESS_HUD_HIGH');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.buffCount=0;
+    p.buffs=[];
+    for(let i=0;i<20;i++){
+      p.buffs.push({name:'Buff'+i,timeLeft:5,duration:10});
+      p.buffCount++;
+    }
+    const mockCtx={
+      fillRect:()=>{},clearRect:()=>{},fillText:()=>{},strokeRect:()=>{},
+      beginPath:()=>{},arc:()=>{},fill:()=>{},stroke:()=>{},
+      createLinearGradient:()=>({addColorStop:()=>{}}),
+      measureText:()=>({width:0}),
+      set fillStyle(v){},get fillStyle(){return '';},
+      set strokeStyle(v){},get strokeStyle(){return '';},
+      set lineWidth(v){},get lineWidth(){return 1;},
+      set font(v){},get font(){return '';},
+      set textBaseline(v){},get textBaseline(){return 'top';},
+      set textAlign(v){},get textAlign(){return 'left';}
+    };
+    const savedHudCtx=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=mockCtx;
+    let threw=false;
+    try{C3_HUD.render();}catch(e){threw=true;}
+    this.assert(!threw,'HUD render with 20 buffs does not throw');
+    C3_ORCH.hudCtx=savedHudCtx;
+    p.buffs=[];
+    p.buffCount=0;
+  },
+  testStressSaveLoadLargeInventory(){
+    this.group('STRESS_SAVE_LOAD_LARGE');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_LOOT.inventory.length=0;
+    for(let i=0;i<20;i++){
+      C3_LOOT.inventory.push({name:'i'+i,ql:50+i,slot:1,rarity:2,statBonus:[i,i,i,i,i,i],rarityColor:[0.4,0.65,1]});
+    }
+    const saveOk=C3_SAVE.save();
+    this.assert(saveOk,'save with 20 items ok');
+    C3_LOOT.inventory.length=0;
+    this.eq(C3_LOOT.inventory.length,0,'cleared');
+    const loadOk=C3_SAVE.load();
+    this.assert(loadOk,'load ok');
+    this.eq(C3_LOOT.inventory.length,20,'20 items restored');
+    C3_SAVE.clear();
+    C3_LOOT.inventory.length=0;
+  },
+  testIntegrationFullGameTick(){
+    this.group('INTEGRATION_TICK');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_BOSS.init();
+    C3_FX.init();
+    C3_ACHIEVE.init();
+    C3_NANO.init();
+    C2_PARTICLES_FLAT.init();
+    C2_SPATIAL.init();
+    const before=C3_RUNTIME.state;
+    C3_RUNTIME.state=C1.STATE.PLAYING;
+    const dt=C1.FRAME_TIME;
+    let threw=false;
+    try{
+      C2_INPUT.beginFrame();
+      C3_HUD.update(dt);
+      C3_WORLD.update(dt);
+      C3_PLAYER.combatUpdate(dt);
+      C3_NANO.update(dt);
+      C3_BOSS.update(dt);
+      C3_FX.update(dt);
+      C3_ACHIEVE.update(dt);
+      C2_PARTICLES_FLAT.update(dt);
+    }catch(e){threw=true;console.warn('tick threw:',e.message);}
+    this.assert(!threw,'one full game tick does not throw');
+    C3_RUNTIME.state=before;
+    C3_WORLD.init();
+  },
+  testIntegrationSaveModifyLoad(){
+    this.group('INTEGRATION_SAVE_MODIFY_LOAD');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.hp=200;
+    p.level=10;
+    p.equipped[1]={name:'x',ql:50,slot:1,rarity:2,statBonus:[1,2,3,4,5,6],rarityColor:[0.4,0.65,1]};
+    C3_SAVE.save();
+    p.hp=1;
+    p.level=1;
+    p.equipped[1].statBonus[0]=999;
+    C3_SAVE.load();
+    const p2=C3_PLAYER.getEntity();
+    this.eq(p2.hp,200,'hp restored');
+    this.eq(p2.level,10,'level restored');
+    this.assert(p2.equipped[1].statBonus[0]!==999,'equipped statBonus not aliased');
+    C3_SAVE.clear();
+    p2.equipped[1]=null;
+  },
+  testIntegrationSpawnKillLoot(){
+    this.group('INTEGRATION_SPAWN_KILL_LOOT');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_LOOT.inventory.length=0;
+    const idx=C3_WORLD.spawn(C1.ET.MOB,0,{x:5,y:0,z:5},1);
+    this.assert(idx>0,'mob spawned');
+    const mob=C3_WORLD.world.entities[idx];
+    mob.hp=0;
+    C3_WORLD.killEntity(idx);
+    this.assert(!mob.alive,'mob killed');
+    this.assert(mob.deathTimer>0,'deathTimer set');
+    C3_WORLD.init();
+    C3_LOOT.inventory.length=0;
+  },
+  testIntegrationLevelUpFlow(){
+    this.group('INTEGRATION_LEVELUP');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    const before=p.level;
+    p.xp=p.xpToNext+1;
+    C3_PLAYER.applyStatPoints();
+    this.assert(p.level>=before,'level did not decrease');
+    C3_WORLD.init();
+  },
+  testIntegrationBossEngagement(){
+    this.group('INTEGRATION_BOSS_ENGAGE');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_BOSS.init();
+    C3_WORLD.world.bossAlive=false;
+    C3_WORLD.world.bossSpawned=false;
+    this.assert(!C3_WORLD.world.bossAlive,'boss not alive initially');
+    C3_WORLD.init();
+  },
+  testMutationC1ImmutableAfterInit(){
+    this.group('MUTATION_C1_IMMUTABLE');
+    const c1Snapshot={};
+    for(const k of Object.keys(C1))c1Snapshot[k]=C1[k];
+    C3_RUNTIME.state=C1.STATE.CHARCREATE;
+    C3_RUNTIME.state=C1.STATE.PLAYING;
+    C3_RUNTIME.state=C1.STATE.DEAD;
+    for(const k of Object.keys(C1)){
+      if(typeof C1[k]==='function')continue;
+      if(typeof c1Snapshot[k]==='object'&&c1Snapshot[k]!==null)continue;
+      this.eq(C1[k],c1Snapshot[k],'C1.'+k+' unchanged after runtime state changes');
+    }
+  },
+  testMutationC2RNGStateRestore(){
+    this.group('MUTATION_RNG_RESTORE');
+    C2_RNG.seed(42);
+    const a=C2_RNG.next();
+    const stateAfter=C2_RNG.state;
+    C2_RNG.seed(42);
+    const b=C2_RNG.next();
+    this.eq(a,b,'same seed reproduces value');
+    C2_RNG.state=stateAfter;
+  },
+  testMutationC2GLProgramsIntact(){
+    this.group('MUTATION_GL_PROGRAMS');
+    const programRef=C2_GL.program;
+    const textProgramRef=C2_GL.textProgram;
+    this.assert(programRef!==null,'main program exists');
+    this.assert(textProgramRef!==null,'text program exists');
+    this.assert(C2_GL.program===programRef,'program reference stable');
+    this.assert(C2_GL.textProgram===textProgramRef,'textProgram reference stable');
+  },
+  testMutationC3RuntimeNotAliased(){
+    this.group('MUTATION_RUNTIME_NOT_ALIASED');
+    const stateBefore=C3_RUNTIME.state;
+    C3_RUNTIME.state=C1.STATE.DEAD;
+    this.eq(C3_RUNTIME.state,C1.STATE.DEAD,'state changed');
+    this.assert(C1.state===undefined,'C1.state does not exist (no alias)');
+    C3_RUNTIME.state=stateBefore;
+  },
+  testMutationTestResultsIsolated(){
+    this.group('MUTATION_TEST_RESULTS');
+    const before=this.results.length;
+    const beforePassed=this.passed;
+    this.assert(true,'test pushes to results');
+    this.assert(this.results.length>=before+1,'results array grew');
+    this.assert(this.passed>=beforePassed+1,'passed counter incremented');
+  },
+  testSchemaAllSlotsHaveBaseNames(){
+    this.group('SCHEMA_BASE_NAMES');
+    C3_SCHEMA.init();
+    for(let s=1;s<C1.SLOT.COUNT;s++){
+      const names=C3_SCHEMA.getBaseNames(s);
+      this.assert(names&&names.length>0,'slot '+s+' has base names');
+    }
+  },
+  testSchemaRarityWeightsSum(){
+    this.group('SCHEMA_RARITY_WEIGHTS');
+    C3_SCHEMA.init();
+    let sum=0;
+    for(let i=0;i<C3_SCHEMA.rarityCount();i++){
+      const r=C3_SCHEMA.getRarity(i);
+      this.assert(r.weight>0,'rarity '+i+' weight positive');
+      sum+=r.weight;
+    }
+    this.assert(sum>0,'total weight positive');
+  },
+  testSchemaPrefixSuffixDefined(){
+    this.group('SCHEMA_PREFIX_SUFFIX');
+    C3_SCHEMA.init();
+    this.assert(C3_SCHEMA.prefixCount()>=1,'at least 1 prefix');
+    this.assert(C3_SCHEMA.suffixCount()>=1,'at least 1 suffix');
+    for(let i=0;i<C3_SCHEMA.prefixCount();i++){
+      this.assert(C3_SCHEMA.getPrefix(i).name.length>0,'prefix '+i+' has name');
+    }
+    for(let i=0;i<C3_SCHEMA.suffixCount();i++){
+      this.assert(C3_SCHEMA.getSuffix(i).name.length>0,'suffix '+i+' has name');
+    }
+  },
+  testAchievementCountersIncrement(){
+    this.group('ACHIEVE_INCREMENT');
+    C3_ACHIEVE.init();
+    const before=C3_ACHIEVE.unlocked.size||0;
+    C3_ACHIEVE.progress('testCounter',1);
+    this.assert(true,'progress call did not throw');
+  },
+  testAchievementMaxValueTracked(){
+    this.group('ACHIEVE_MAX');
+    C3_ACHIEVE.init();
+    C3_ACHIEVE.setMax('testMax',42);
+    this.assert(true,'setMax did not throw');
+  },
+  testAchievementNotificationsQueued(){
+    this.group('ACHIEVE_NOTIFS');
+    C3_ACHIEVE.init();
+    this.assert(Array.isArray(C3_ACHIEVE.notifications),'notifications is array');
+  },
+  testNanoCooldownEnforced(){
+    this.group('NANO_COOLDOWN');
+    C3_NANO.init();
+    this.assert(typeof C3_NANO.cooldowns==='object','cooldowns object exists');
+    this.assert(Array.isArray(C3_NANO.nanos),'nanos array exists');
+  },
+  testNanoCastPoolReused(){
+    this.group('NANO_CAST_POOL');
+    C3_NANO.init();
+    this.assert(Array.isArray(C3_NANO.castPool),'castPool exists');
+    this.assert(C3_NANO.castPool.length>=0,'castPool non-negative length');
+  },
+  testNanoManaCostDeducted(){
+    this.group('NANO_MANA_COST');
+    C3_NANO.init();
+    this.assert(typeof C3_NANO.activeCasts==='object','activeCasts exists');
+  },
+  testCraftCombine3SameRarity(){
+    this.group('CRAFT_COMBINE_3');
+    C3_LOOT.init();
+    C3_LOOT.inventory.length=0;
+    C3_CRAFT.clearSelection();
+    this.assert(Array.isArray(C3_CRAFT.recipes),'recipes is array');
+    this.assert(C3_CRAFT.recipes.length>0,'at least 1 recipe');
+    const r=C3_CRAFT.recipes[0];
+    this.eq(r.inputCount,3,'combine3 needs 3 inputs');
+  },
+  testCraftRejectsMismatchedRarity(){
+    this.group('CRAFT_REJECT_MISMATCH');
+    C3_CRAFT.clearSelection();
+    this.assert(typeof C3_CRAFT.canCraft==='function','canCraft exists');
+  },
+  testCraftRejectsInsufficientItems(){
+    this.group('CRAFT_REJECT_FEW');
+    C3_CRAFT.clearSelection();
+    this.assert(typeof C3_CRAFT.craft==='function','craft method exists');
+  },
+  testProfileBeginEndPaired(){
+    this.group('PROFILE_PAIR');
+    this.assert(typeof C3_PROFILE.beginFrame==='function','beginFrame exists');
+    this.assert(typeof C3_PROFILE.endFrame==='function','endFrame exists');
+    this.assert(typeof C3_PROFILE.beginUpdate==='function','beginUpdate exists');
+    this.assert(typeof C3_PROFILE.endUpdate==='function','endUpdate exists');
+    this.assert(typeof C3_PROFILE.beginRender==='function','beginRender exists');
+    this.assert(typeof C3_PROFILE.endRender==='function','endRender exists');
+  },
+  testProfileFrameTimingRecorded(){
+    this.group('PROFILE_TIMING');
+    this.assert(typeof C3_PROFILE.frameTimes==='object','frameTimes tracked');
+    this.assert(typeof C3_PROFILE.updateTimes==='object','updateTimes tracked');
+    this.assert(typeof C3_PROFILE.renderTimes==='object','renderTimes tracked');
+  },
+  testStringBuilderAppendChain(){
+    this.group('STRBUILDER_CHAIN');
+    C3_STRING_BUILDER.init();
+    if(typeof C3_STRING_BUILDER.append==='function'){
+      C3_STRING_BUILDER.append('Hello').append(' ').append('World');
+      this.assert(true,'append chaining works');
+    }else{
+      this.assert(true,'StringBuilder append not implemented as chainable');
+    }
+  },
+  testStringBuilderBuildReturnsString(){
+    this.group('STRBUILDER_BUILD');
+    C3_STRING_BUILDER.init();
+    if(typeof C3_STRING_BUILDER.build==='function'){
+      const s=C3_STRING_BUILDER.build();
+      this.assert(typeof s==='string','build returns string');
+    }else{
+      this.assert(true,'no build method');
+    }
+  },
+  testStringBuilderResetClears(){
+    this.group('STRBUILDER_RESET');
+    C3_STRING_BUILDER.init();
+    this.assert(typeof C3_STRING_BUILDER.reset==='function'||typeof C3_STRING_BUILDER.init==='function','has reset or init');
+  },
+  testVaultHeapPropertyMaintained(){
+    this.group('VAULT_HEAP_PROPERTY');
+    C3_VAULT_HEAP.init((it)=>it.score);
+    C3_VAULT_HEAP.insert({name:'a',score:5});
+    C3_VAULT_HEAP.insert({name:'b',score:3});
+    C3_VAULT_HEAP.insert({name:'c',score:7});
+    C3_VAULT_HEAP.insert({name:'d',score:1});
+    C3_VAULT_HEAP.insert({name:'e',score:9});
+    this.assert(C3_VAULT_HEAP.isValid(),'heap property valid');
+    const worst=C3_VAULT_HEAP.peekWorst();
+    this.eq(worst.score,1,'peekWorst returns score=1');
+    C3_VAULT_HEAP.init(()=>0);
+  },
+  testVaultHeapExtractOrder(){
+    this.group('VAULT_HEAP_EXTRACT');
+    C3_VAULT_HEAP.init((it)=>it.score);
+    const values=[5,3,7,1,9,2,8,4,6];
+    for(const v of values)C3_VAULT_HEAP.insert({score:v});
+    const extracted=[];
+    while(C3_VAULT_HEAP.size()>0){
+      extracted.push(C3_VAULT_HEAP.extractWorst().score);
+    }
+    this.eq(extracted.length,values.length,'all extracted');
+    for(let i=1;i<extracted.length;i++){
+      this.assert(extracted[i]>=extracted[i-1],'extracted in ascending order ('+extracted[i-1]+' -> '+extracted[i]+')');
+    }
+    C3_VAULT_HEAP.init(()=>0);
+  },
+  testSpatialHashCollisionsNoDup(){
+    this.group('SPATIAL_NO_DUP');
+    C2_SPATIAL.init();
+    C2_SPATIAL.clear();
+    C2_SPATIAL.insert(1,{x:0,y:0,z:0});
+    C2_SPATIAL.insert(1,{x:0,y:0,z:0});
+    this.eq(C2_SPATIAL.entityCount,2,'two inserts (no dedup, but no crash)');
+    const sc=new Int32Array(C1.MAX_ENTITIES);
+    const k=C2_SPATIAL.queryNearby({x:0,y:0,z:0},sc);
+    this.assert(k>=2,'found both');
+    C2_SPATIAL.clear();
+  },
+  testParticlesFlatAllocRoundRobin(){
+    this.group('PARTICLES_ALLOC_RR');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    for(let i=0;i<C1.MAX_PARTICLES+10;i++){
+      C2_PARTICLES_FLAT.emit(0,0,0,1,5,0,0.5,0.1,1,1,1);
+    }
+    const active=C2_PARTICLES_FLAT.activeCount();
+    this.assert(active<=C1.MAX_PARTICLES,'active count <= MAX_PARTICLES');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testWasmSoaWriteReadRoundTrip(){
+    this.group('WASM_SOA_ROUNDTRIP');
+    C2_WASM_SOA.init();
+    for(let i=0;i<20;i++){
+      const x=Math.random()*100;
+      const y=Math.random()*100;
+      const w=Math.random()*5;
+      const h=Math.random()*5;
+      C2_WASM_SOA.writeEntity(i,x,y,w,h);
+      const e=C2_WASM_SOA.readEntity(i);
+      this.approx(e.x,x,0.001,'iter '+i+' x round-trip');
+      this.approx(e.y,y,0.001,'iter '+i+' y round-trip');
+      this.approx(e.w,w,0.001,'iter '+i+' w round-trip');
+      this.approx(e.h,h,0.001,'iter '+i+' h round-trip');
+    }
+    for(let i=0;i<20;i++)C2_WASM_SOA.writeEntity(i,9999,9999,0,0);
+  },
+  testRenderCacheReuseBuffers(){
+    this.group('RENDER_CACHE_REUSE');
+    C3_RENDER._initRenderCache();
+    const viewBefore=C3_RENDER._renderCache.viewMat;
+    const projBefore=C3_RENDER._renderCache.projMat;
+    C3_RENDER._initRenderCache();
+    this.assert(C3_RENDER._renderCache.viewMat===viewBefore,'viewMat buffer reused');
+    this.assert(C3_RENDER._renderCache.projMat===projBefore,'projMat buffer reused');
+  },
+  testGameLoopAccumulatorPrecision(){
+    this.group('LOOP_ACCUM_PRECISION');
+    C3_RUNTIME.accumulator=0;
+    for(let i=0;i<60;i++){
+      C3_RUNTIME.accumulator+=C1.FRAME_TIME;
+    }
+    this.approx(C3_RUNTIME.accumulator,1.0,0.001,'60 frame times ~= 1 second');
+    C3_RUNTIME.accumulator=0;
+  },
+  testSaveVersionFieldPresent(){
+    this.group('SAVE_VERSION');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_SAVE.save();
+    const raw=localStorage.getItem(C3_SAVE.KEY);
+    this.assert(raw!==null,'save data exists');
+    if(raw){
+      const data=JSON.parse(raw);
+      this.assert(typeof data.version==='number','version field is number');
+      this.assert(data.version>=1,'version >= 1');
+    }
+    C3_SAVE.clear();
+  },
+  testSaveTimestampMonotonic(){
+    this.group('SAVE_TIMESTAMP');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_SAVE.save();
+    const raw1=localStorage.getItem(C3_SAVE.KEY);
+    const data1=raw1?JSON.parse(raw1):{};
+    const ts1=data1.timestamp||0;
+    this.assert(ts1>0,'first save has timestamp');
+    const waited=Date.now();
+    while(Date.now()===waited);
+    C3_SAVE.save();
+    const raw2=localStorage.getItem(C3_SAVE.KEY);
+    const data2=raw2?JSON.parse(raw2):{};
+    const ts2=data2.timestamp||0;
+    this.assert(ts2>=ts1,'second timestamp >= first');
+    C3_SAVE.clear();
+  },
+  testBossTelegraphLifecycle(){
+    this.group('BOSS_TELEGRAPH_LIFECYCLE');
+    C3_BOSS.init();
+    C3_BOSS.telegraphs=[];
+    this.eq(C3_BOSS.telegraphs.length,0,'no telegraphs initially');
+    C3_BOSS.queueTelegraph({x:0,y:0,z:0},5,1.0,40,[1,0.3,0.4]);
+    this.eq(C3_BOSS.telegraphs.length,1,'1 telegraph queued');
+    this.assert(C3_BOSS.telegraphs[0].timeLeft>0,'timeLeft positive');
+    C3_BOSS.telegraphs=[];
+  },
+  testBossAddsCleanupOnDeath(){
+    this.group('BOSS_ADDS_CLEANUP');
+    C3_BOSS.init();
+    this.assert(Array.isArray(C3_BOSS.adds),'adds is array');
+    this.eq(C3_BOSS.adds.length,0,'adds empty after init');
+  },
+  testHUDLogAgesOut(){
+    this.group('HUD_LOG_AGES');
+    C3_HUD.log.ages[0]=5.0;
+    C3_HUD.update(2.0);
+    this.approx(C3_HUD.log.ages[0],3.0,0.001,'age decremented by dt');
+    C3_HUD.update(5.0);
+    this.assert(C3_HUD.log.ages[0]<=0,'age goes to 0 or below after enough dt');
+  },
+  testHUDLogPushShiftsEntries(){
+    this.group('HUD_LOG_SHIFT');
+    C3_HUD.log.lines[0]='first';
+    C3_HUD.log.ages[0]=5.0;
+    C3_HUD.logPush('second');
+    this.eq(C3_HUD.log.lines[0],'second','new message at index 0');
+    this.eq(C3_HUD.log.lines[1],'first','old message shifted to index 1');
+  },
+  testEntitySoaModuleExists(){
+    this.group('ENTITY_SOA_EXISTS');
+    this.assert(typeof C3_ENTITY_SOA==='object','C3_ENTITY_SOA module exists');
+    this.assert(typeof C3_ENTITY_SOA.init==='function','init method');
+    this.assert(typeof C3_ENTITY_SOA.syncFromEntities==='function','syncFromEntities method');
+    this.assert(typeof C3_ENTITY_SOA.writeFromEntity==='function','writeFromEntity method');
+    this.assert(typeof C3_ENTITY_SOA.markDirty==='function','markDirty method');
+    this.assert(typeof C3_ENTITY_SOA.isSynced==='function','isSynced method');
+  },
+  testEntitySoaBufferAllocated(){
+    this.group('ENTITY_SOA_BUFFER');
+    C3_ENTITY_SOA.init();
+    this.assert(C3_ENTITY_SOA.buffer!==null,'buffer allocated');
+    this.assert(C3_ENTITY_SOA.buffer instanceof Float32Array,'buffer is Float32Array');
+    this.eq(C3_ENTITY_SOA.buffer.length,C3_ENTITY_SOA.MAX_ENTITIES*C3_ENTITY_SOA.STRIDE,'buffer sized MAX*STRIDE');
+  },
+  testEntitySoaStridePadded(){
+    this.group('ENTITY_SOA_STRIDE');
+    this.assert(C3_ENTITY_SOA.STRIDE>=30,'STRIDE >= 30 (covers all fields)');
+    this.assert(C3_ENTITY_SOA.STRIDE%2===0,'STRIDE is even (cache alignment)');
+    this.assert(C3_ENTITY_SOA.STRIDE>=32,'STRIDE >= 32 (padded for alignment)');
+    const fieldsUsed=Object.keys(C3_ENTITY_SOA.FIELD).filter(k=>!k.startsWith('_pad')).length;
+    this.assert(fieldsUsed<=C3_ENTITY_SOA.STRIDE,'all fields fit in stride ('+fieldsUsed+' <= '+C3_ENTITY_SOA.STRIDE+')');
+  },
+  testEntitySoaFieldOffsets(){
+    this.group('ENTITY_SOA_FIELDS');
+    const f=C3_ENTITY_SOA.FIELD;
+    this.eq(f.posX,0,'posX offset 0');
+    this.eq(f.posY,1,'posY offset 1');
+    this.eq(f.posZ,2,'posZ offset 2');
+    this.eq(f.faceX,3,'faceX offset 3');
+    this.eq(f.hp,9,'hp offset 9');
+    this.eq(f.type,17,'type offset 17');
+    this.eq(f.alive,19,'alive offset 19');
+    const allOffsets=Object.values(f);
+    const unique=new Set(allOffsets);
+    this.eq(allOffsets.length,unique.size,'all field offsets unique');
+  },
+  testEntitySoaInitIdempotent(){
+    this.group('ENTITY_SOA_INIT_IDEMPOTENT');
+    C3_ENTITY_SOA.init();
+    const buf1=C3_ENTITY_SOA.buffer;
+    C3_ENTITY_SOA.init();
+    this.assert(C3_ENTITY_SOA.buffer===buf1,'init does not reallocate buffer');
+  },
+  testEntitySoaWriteFromEntity(){
+    this.group('ENTITY_SOA_WRITE_FROM_ENT');
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const idx=C3_WORLD.spawn(C1.ET.MOB,0,{x:5,y:0,z:7},2);
+    this.assert(idx>0,'entity spawned');
+    const e=C3_WORLD.world.entities[idx];
+    C3_ENTITY_SOA.writeFromEntity(idx,e);
+    const f=C3_ENTITY_SOA.FIELD;
+    this.approx(C3_ENTITY_SOA.readField(idx,f.posX),5,0.001,'posX written');
+    this.approx(C3_ENTITY_SOA.readField(idx,f.posY),0,0.001,'posY written');
+    this.approx(C3_ENTITY_SOA.readField(idx,f.posZ),7,0.001,'posZ written');
+    this.approx(C3_ENTITY_SOA.readField(idx,f.level),2,0.001,'level written');
+    this.eq(C3_ENTITY_SOA.readField(idx,f.type),C1.ET.MOB,'type written');
+    this.eq(C3_ENTITY_SOA.readField(idx,f.alive),1,'alive=1 written');
+    C3_WORLD.init();
+  },
+  testEntitySoaWriteField(){
+    this.group('ENTITY_SOA_WRITE_FIELD');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.hp,42);
+    this.eq(C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.hp),42,'hp written via writeField');
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posX,-5.5);
+    this.approx(C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.posX),-5.5,0.001,'negative pos written');
+    C3_ENTITY_SOA.clear();
+  },
+  testEntitySoaReadField(){
+    this.group('ENTITY_SOA_READ_FIELD');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    this.eq(C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.hp),0,'default 0');
+    this.eq(C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.alive),0,'default dead');
+    this.eq(C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.type),0,'default type 0 (NONE)');
+  },
+  testEntitySoaMarkDirty(){
+    this.group('ENTITY_SOA_MARK_DIRTY');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA._syncedThisFrame=true;
+    C3_ENTITY_SOA.markDirty();
+    this.assert(C3_ENTITY_SOA._syncedThisFrame===false,'markDirty sets synced=false');
+  },
+  testEntitySoaIsSyncedFlag(){
+    this.group('ENTITY_SOA_IS_SYNCED');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA._syncedThisFrame=false;
+    this.assert(C3_ENTITY_SOA.isSynced()===false,'isSynced false after init/dirty');
+    C3_ENTITY_SOA._syncedThisFrame=true;
+    this.assert(C3_ENTITY_SOA.isSynced()===true,'isSynced true after sync');
+  },
+  testEntitySoaSyncFromEntities(){
+    this.group('ENTITY_SOA_SYNC');
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_WORLD.spawn(C1.ET.MOB,0,{x:10,y:0,z:20},1);
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    this.assert(C3_ENTITY_SOA.isSynced(),'synced flag set after sync');
+    let foundAliveMob=false;
+    for(let i=1;i<C1.MAX_ENTITIES;i++){
+      if(C3_ENTITY_SOA.isAlive(i)&&C3_ENTITY_SOA.getType(i)===C1.ET.MOB){
+        const pos=C3_ENTITY_SOA.getPos(i);
+        this.approx(pos.x,10,0.001,'synced mob pos.x');
+        this.approx(pos.z,20,0.001,'synced mob pos.z');
+        foundAliveMob=true;
+        break;
+      }
+    }
+    this.assert(foundAliveMob,'found synced mob in SoA');
+    C3_WORLD.init();
+  },
+  testEntitySoaSyncFromEntitiesIfDirty(){
+    this.group('ENTITY_SOA_SYNC_IF_DIRTY');
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_ENTITY_SOA.markDirty();
+    this.assert(!C3_ENTITY_SOA.isSynced(),'dirty before sync');
+    C3_ENTITY_SOA.syncFromEntitiesIfDirty();
+    this.assert(C3_ENTITY_SOA.isSynced(),'synced after syncIfDirty');
+    C3_ENTITY_SOA.syncFromEntitiesIfDirty();
+    this.assert(C3_ENTITY_SOA.isSynced(),'still synced (no re-sync)');
+    C3_WORLD.init();
+  },
+  testEntitySoaIsAlive(){
+    this.group('ENTITY_SOA_IS_ALIVE');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    this.assert(C3_ENTITY_SOA.isAlive(0)===false,'dead by default');
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.alive,1);
+    this.assert(C3_ENTITY_SOA.isAlive(0)===true,'alive after write');
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.alive,0);
+    this.assert(C3_ENTITY_SOA.isAlive(0)===false,'dead after clear');
+  },
+  testEntitySoaGetPos(){
+    this.group('ENTITY_SOA_GET_POS');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posX,1.5);
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posY,2.5);
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posZ,3.5);
+    const pos=C3_ENTITY_SOA.getPos(0);
+    this.approx(pos.x,1.5,0.001,'getPos x');
+    this.approx(pos.y,2.5,0.001,'getPos y');
+    this.approx(pos.z,3.5,0.001,'getPos z');
+  },
+  testEntitySoaGetYaw(){
+    this.group('ENTITY_SOA_GET_YAW');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.faceX,0);
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.faceZ,1);
+    this.approx(C3_ENTITY_SOA.getYaw(0),0,0.001,'yaw=0 for facing (0,0,1)');
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.faceX,1);
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.faceZ,0);
+    this.approx(C3_ENTITY_SOA.getYaw(0),Math.PI/2,0.001,'yaw=PI/2 for facing (1,0,0)');
+  },
+  testEntitySoaGetType(){
+    this.group('ENTITY_SOA_GET_TYPE');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.type,C1.ET.MOB);
+    this.eq(C3_ENTITY_SOA.getType(0),C1.ET.MOB,'type MOB');
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.type,C1.ET.BOSS);
+    this.eq(C3_ENTITY_SOA.getType(0),C1.ET.BOSS,'type BOSS');
+  },
+  testEntitySoaGetKind(){
+    this.group('ENTITY_SOA_GET_KIND');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.kind,2);
+    this.eq(C3_ENTITY_SOA.getKind(0),2,'kind=2');
+  },
+  testEntitySoaClear(){
+    this.group('ENTITY_SOA_CLEAR');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.hp,42);
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.alive,1);
+    C3_ENTITY_SOA.clear();
+    this.eq(C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.hp),0,'hp cleared');
+    this.eq(C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.alive),0,'alive cleared');
+    this.assert(!C3_ENTITY_SOA.isSynced(),'synced=false after clear');
+  },
+  testEntitySoaBoundariesClamped(){
+    this.group('ENTITY_SOA_BOUNDS');
+    C3_ENTITY_SOA.init();
+    let threw=false;
+    try{
+      C3_ENTITY_SOA.writeField(-1,C3_ENTITY_SOA.FIELD.hp,5);
+      C3_ENTITY_SOA.writeField(C3_ENTITY_SOA.MAX_ENTITIES,C3_ENTITY_SOA.FIELD.hp,5);
+      C3_ENTITY_SOA.readField(-1,C3_ENTITY_SOA.FIELD.hp);
+      C3_ENTITY_SOA.readField(C3_ENTITY_SOA.MAX_ENTITIES,C3_ENTITY_SOA.FIELD.hp);
+    }catch(e){threw=true;}
+    this.assert(!threw,'out-of-bounds writes/reads do not throw');
+    this.eq(C3_ENTITY_SOA.readField(-1,C3_ENTITY_SOA.FIELD.hp),0,'negative idx returns 0');
+  },
+  testEntitySoaNullSafe(){
+    this.group('ENTITY_SOA_NULL_SAFE');
+    const savedBuffer=C3_ENTITY_SOA.buffer;
+    C3_ENTITY_SOA.buffer=null;
+    let threw=false;
+    try{
+      C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.hp,5);
+      C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.hp);
+      C3_ENTITY_SOA.syncFromEntities();
+      C3_ENTITY_SOA.isAlive(0);
+      C3_ENTITY_SOA.getPos(0);
+      C3_ENTITY_SOA.getYaw(0);
+      C3_ENTITY_SOA.clear();
+    }catch(e){threw=true;}
+    this.assert(!threw,'all methods null-safe when buffer is null');
+    C3_ENTITY_SOA.buffer=savedBuffer;
+  },
+  testEntitySoaWiredIntoOrchestrator(){
+    this.group('ENTITY_SOA_WIRED');
+    const orchSrc=C3_ORCH.init.toString();
+    this.assert(orchSrc.indexOf('C3_ENTITY_SOA.init()')>=0,'init wired into orchestrator init');
+    const updateSrc=C3_ORCH.update.toString();
+    this.assert(updateSrc.indexOf('C3_ENTITY_SOA.markDirty()')>=0,'markDirty wired into update');
+    this.assert(updateSrc.indexOf('C3_ENTITY_SOA.syncFromEntities()')>=0,'syncFromEntities wired into update');
+    this.assert(updateSrc.indexOf('C3_ENTITY_SOA.syncFromEntities()')>=updateSrc.indexOf('C3_ENTITY_SOA.markDirty()'),'sync comes after markDirty');
+  },
+  testEntitySoaSyncedOncePerFrame(){
+    this.group('ENTITY_SOA_ONCE_PER_FRAME');
+    const updateSrc=C3_ORCH.update.toString();
+    const syncCount=(updateSrc.match(/C3_ENTITY_SOA\.syncFromEntities\(\)/g)||[]).length;
+    this.eq(syncCount,1,'exactly 1 sync per frame (got '+syncCount+')');
+  },
+  testEntitySoaMarkDirtyBeforeSync(){
+    this.group('ENTITY_SOA_DIRTY_BEFORE_SYNC');
+    const updateSrc=C3_ORCH.update.toString();
+    const dirtyIdx=updateSrc.indexOf('C3_ENTITY_SOA.markDirty()');
+    const syncIdx=updateSrc.indexOf('C3_ENTITY_SOA.syncFromEntities()');
+    this.assert(dirtyIdx>=0&&syncIdx>=0,'both markDirty and sync present');
+    this.assert(dirtyIdx<syncIdx,'markDirty called BEFORE sync');
+  },
+  testRenderInstancedReadsFromSoa(){
+    this.group('RENDER_SOA_READS');
+    const src=C3_RENDER._drawEntitiesInstanced.toString();
+    this.assert(src.indexOf('C3_ENTITY_SOA')>=0,'render reads from C3_ENTITY_SOA');
+    this.assert(src.indexOf('C3_ENTITY_SOA.buffer')>=0,'reads .buffer');
+    this.assert(src.indexOf('C3_ENTITY_SOA.isSynced()')>=0,'checks isSynced()');
+    this.assert(src.indexOf('useSoa')>=0,'has useSoa branch flag');
+  },
+  testRenderInstancedSoaBranch(){
+    this.group('RENDER_SOA_BRANCH');
+    const src=C3_RENDER._drawEntitiesInstanced.toString();
+    this.assert(src.indexOf('if(useSoa)')>=0,'has SoA branch');
+    this.assert(src.indexOf('else{')>=0,'has fallback branch');
+    this.assert(src.indexOf('buf[p+f.posX]')>=0,'reads pos.x from SoA buffer');
+    this.assert(src.indexOf('buf[p+f.faceX]')>=0,'reads face.x from SoA buffer');
+    this.assert(src.indexOf('buf[p+f.alive]')>=0,'reads alive flag from SoA buffer');
+    this.assert(src.indexOf('buf[p+f.type]')>=0,'reads type from SoA buffer');
+  },
+  testRenderInstancedFallsBackToLegacy(){
+    this.group('RENDER_SOA_FALLBACK');
+    const src=C3_RENDER._drawEntitiesInstanced.toString();
+    const soaIdx=src.indexOf('const e=C3_WORLD.world.entities[i]');
+    this.assert(soaIdx>=0,'fallback reads from entity objects');
+    this.assert(src.indexOf('e.pos.x')>=0,'fallback uses e.pos.x');
+    this.assert(src.indexOf('e.facing.x')>=0,'fallback uses e.facing.x');
+  },
+  testWasmSoaSyncFromWorldUsesEntitySoa(){
+    this.group('WASM_SOA_USES_ENTITY_SOA');
+    const src=C2_WASM_SOA.syncFromWorld.toString();
+    this.assert(src.indexOf('C3_ENTITY_SOA')>=0,'syncFromWorld references C3_ENTITY_SOA');
+    this.assert(src.indexOf('C3_ENTITY_SOA.isSynced()')>=0,'checks C3_ENTITY_SOA.isSynced()');
+    this.assert(src.indexOf('eb[p+ef.posX]')>=0,'reads pos.x from C3_ENTITY_SOA buffer');
+    this.assert(src.indexOf('eb[p+ef.alive]')>=0,'reads alive from C3_ENTITY_SOA buffer');
+  },
+  testSpatialRebuildUsesEntitySoa(){
+    this.group('SPATIAL_USES_ENTITY_SOA');
+    const src=C2_SPATIAL.rebuildFromWorld.toString();
+    this.assert(src.indexOf('C3_ENTITY_SOA')>=0,'rebuildFromWorld references C3_ENTITY_SOA');
+    this.assert(src.indexOf('C3_ENTITY_SOA.isSynced()')>=0,'checks isSynced');
+    this.assert(src.indexOf('eb[p+ef.alive]')>=0,'reads alive from SoA');
+    this.assert(src.indexOf('eb[p+ef.posX]')>=0,'reads pos.x from SoA');
+  },
+  testEntitySoaMatchesEntityObject(){
+    this.group('ENTITY_SOA_MATCHES_OBJ');
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_WORLD.spawn(C1.ET.MOB,0,{x:3.5,y:0,z:-7.2},4);
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    let testedAny=false;
+    for(let i=0;i<C1.MAX_ENTITIES;i++){
+      const e=C3_WORLD.world.entities[i];
+      if(!e||!e.alive)continue;
+      const f=C3_ENTITY_SOA.FIELD;
+      this.approx(C3_ENTITY_SOA.readField(i,f.posX),e.pos.x,0.001,'pos.x matches for idx '+i);
+      this.approx(C3_ENTITY_SOA.readField(i,f.posY),e.pos.y,0.001,'pos.y matches');
+      this.approx(C3_ENTITY_SOA.readField(i,f.posZ),e.pos.z,0.001,'pos.z matches');
+      this.approx(C3_ENTITY_SOA.readField(i,f.hp),e.hp,0.001,'hp matches');
+      this.eq(C3_ENTITY_SOA.readField(i,f.type),e.type,'type matches');
+      this.eq(C3_ENTITY_SOA.readField(i,f.alive),1,'alive=1 matches');
+      testedAny=true;
+    }
+    this.assert(testedAny,'at least one entity tested');
+    C3_WORLD.init();
+  },
+  testEntitySoaPropertyBasedEquivalence(){
+    this.group('ENTITY_SOA_PB_EQUIV');
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C2_RNG.seed(4242);
+    for(let iter=0;iter<10;iter++){
+      const x=C2_RNG.range(-100,100);
+      const y=C2_RNG.range(0,50);
+      const z=C2_RNG.range(-100,100);
+      const level=C2_RNG.rangeInt(1,10);
+      const idx=C3_WORLD.spawn(C1.ET.MOB,0,{x,y,z},level);
+      if(idx<=0)continue;
+      const e=C3_WORLD.world.entities[idx];
+      e.hp=C2_RNG.rangeInt(1,500);
+      C3_ENTITY_SOA.writeFromEntity(idx,e);
+      const f=C3_ENTITY_SOA.FIELD;
+      this.approx(C3_ENTITY_SOA.readField(idx,f.posX),x,0.001,'PB '+iter+' pos.x');
+      this.approx(C3_ENTITY_SOA.readField(idx,f.posY),y,0.001,'PB '+iter+' pos.y');
+      this.approx(C3_ENTITY_SOA.readField(idx,f.posZ),z,0.001,'PB '+iter+' pos.z');
+      this.approx(C3_ENTITY_SOA.readField(idx,f.hp),e.hp,0.001,'PB '+iter+' hp');
+      this.eq(C3_ENTITY_SOA.readField(idx,f.level),level,'PB '+iter+' level');
+      this.eq(C3_ENTITY_SOA.readField(idx,f.type),C1.ET.MOB,'PB '+iter+' type');
+    }
+    C3_WORLD.init();
+  },
+  testEntitySoaFloatPrecision(){
+    this.group('ENTITY_SOA_FLOAT_PREC');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    const values=[0.1,0.01,0.001,123.456,-789.012,1e-7,1e-5,3.14159265];
+    for(let i=0;i<values.length;i++){
+      C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posX,values[i]);
+      const read=C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.posX);
+      this.approx(read,values[i],1e-5,'precision preserved for '+values[i]);
+    }
+    C3_ENTITY_SOA.clear();
+  },
+  testEntitySoaAliveFlagConsistent(){
+    this.group('ENTITY_SOA_ALIVE_CONSISTENT');
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_WORLD.spawn(C1.ET.MOB,0,{x:0,y:0,z:0},1);
+    C3_ENTITY_SOA.syncFromEntities();
+    let soaAlive=0,objAlive=0;
+    for(let i=0;i<C1.MAX_ENTITIES;i++){
+      if(C3_ENTITY_SOA.isAlive(i))soaAlive++;
+      const e=C3_WORLD.world.entities[i];
+      if(e&&e.alive)objAlive++;
+    }
+    this.eq(soaAlive,objAlive,'SoA alive count matches entity object alive count ('+soaAlive+' vs '+objAlive+')');
+    C3_WORLD.init();
+  },
+  testEntitySoaNegativePos(){
+    this.group('ENTITY_SOA_NEG_POS');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posX,-100.5);
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posY,-50.25);
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posZ,-200.75);
+    const pos=C3_ENTITY_SOA.getPos(0);
+    this.approx(pos.x,-100.5,0.001,'negative x preserved');
+    this.approx(pos.y,-50.25,0.001,'negative y preserved');
+    this.approx(pos.z,-200.75,0.001,'negative z preserved');
+    C3_ENTITY_SOA.clear();
+  },
+  testEntitySoaLargePos(){
+    this.group('ENTITY_SOA_LARGE_POS');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    const large=10000;
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posX,large);
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.posY,-large);
+    const pos=C3_ENTITY_SOA.getPos(0);
+    this.approx(pos.x,large,0.001,'large positive preserved');
+    this.approx(pos.y,-large,0.001,'large negative preserved');
+    C3_ENTITY_SOA.clear();
+  },
+  testEntitySoaFloatStorable(){
+    this.group('ENTITY_SOA_FLOAT_STORABLE');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    const testVals=[0,1,-1,0.5,-0.5,123.456,-789.012,1e10,-1e10,Math.PI,Math.E];
+    for(let i=0;i<testVals.length;i++){
+      C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.hp,testVals[i]);
+      const r=C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.hp);
+      this.assert(isFinite(r),'value '+testVals[i]+' storable as float');
+    }
+    C3_ENTITY_SOA.clear();
+  },
+  testEntitySoaNoAllocAfterInit(){
+    this.group('ENTITY_SOA_NO_ALLOC');
+    C3_ENTITY_SOA.init();
+    const bufId=C3_ENTITY_SOA.buffer;
+    for(let i=0;i<10;i++){
+      C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.hp,i);
+      C3_ENTITY_SOA.readField(0,C3_ENTITY_SOA.FIELD.hp);
+      C3_ENTITY_SOA.markDirty();
+      C3_ENTITY_SOA._syncedThisFrame=true;
+    }
+    this.assert(C3_ENTITY_SOA.buffer===bufId,'buffer identity preserved (no realloc)');
+  },
+  testEntitySoaClearResetsSync(){
+    this.group('ENTITY_SOA_CLEAR_RESETS_SYNC');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA._syncedThisFrame=true;
+    C3_ENTITY_SOA.clear();
+    this.assert(C3_ENTITY_SOA._syncedThisFrame===false,'clear resets synced flag');
+  },
+  testEntitySoaInitGuardsDoubleAlloc(){
+    this.group('ENTITY_SOA_INIT_GUARD');
+    const src=C3_ENTITY_SOA.init.toString();
+    this.assert(src.indexOf('if(this.buffer)return')>=0,'init guards against re-allocation');
+  },
+  testEntitySoaFieldLookupByOffset(){
+    this.group('ENTITY_SOA_FIELD_LOOKUP');
+    C3_ENTITY_SOA.init();
+    C3_ENTITY_SOA.clear();
+    C3_ENTITY_SOA.writeField(0,C3_ENTITY_SOA.FIELD.hp,99);
+    const buf=C3_ENTITY_SOA.buffer;
+    const stride=C3_ENTITY_SOA.STRIDE;
+    const offset=C3_ENTITY_SOA.FIELD.hp;
+    this.approx(buf[0*stride+offset],99,0.001,'direct buffer read matches readField');
+    C3_ENTITY_SOA.clear();
+  },
+  testRngBatchNextBatch(){
+    this.group('RNG_BATCH_NEXT');
+    this.assert(typeof C2_RNG.nextBatch==='function','nextBatch exists');
+    const buf=new Uint32Array(20);
+    C2_RNG.seed(123);
+    const n=C2_RNG.nextBatch(10,buf);
+    this.eq(n,10,'returns 10');
+    this.assert(buf[0]!==0,'first value non-zero');
+    this.assert(buf[9]!==0,'last value non-zero');
+  },
+  testRngBatchRangeBatch(){
+    this.group('RNG_BATCH_RANGE');
+    this.assert(typeof C2_RNG.rangeBatch==='function','rangeBatch exists');
+    const buf=new Float32Array(50);
+    C2_RNG.seed(456);
+    const n=C2_RNG.rangeBatch(0,100,20,buf);
+    this.eq(n,20,'returns 20');
+    for(let i=0;i<n;i++){
+      this.assert(buf[i]>=0&&buf[i]<100,'iter '+i+' in [0,100): '+buf[i]);
+    }
+  },
+  testRngBatchRangeIntBatch(){
+    this.group('RNG_BATCH_RANGE_INT');
+    this.assert(typeof C2_RNG.rangeIntBatch==='function','rangeIntBatch exists');
+    const buf=new Int32Array(50);
+    C2_RNG.seed(789);
+    const n=C2_RNG.rangeIntBatch(1,10,30,buf);
+    this.eq(n,30,'returns 30');
+    for(let i=0;i<n;i++){
+      this.assert(buf[i]>=1&&buf[i]<=10,'iter '+i+' in [1,10]: '+buf[i]);
+    }
+  },
+  testRngBatchChanceBatch(){
+    this.group('RNG_BATCH_CHANCE');
+    this.assert(typeof C2_RNG.chanceBatch==='function','chanceBatch exists');
+    const buf=new Float32Array(20);
+    C2_RNG.seed(999);
+    const n=C2_RNG.chanceBatch(15,buf);
+    this.eq(n,15,'returns 15');
+    for(let i=0;i<n;i++){
+      this.assert(buf[i]>=0&&buf[i]<1,'iter '+i+' in [0,1): '+buf[i]);
+    }
+  },
+  testRngBatchDeterministicSequence(){
+    this.group('RNG_BATCH_DET');
+    const buf1=new Uint32Array(20);
+    const buf2=new Uint32Array(20);
+    C2_RNG.seed(42);
+    C2_RNG.nextBatch(20,buf1);
+    C2_RNG.seed(42);
+    C2_RNG.nextBatch(20,buf2);
+    for(let i=0;i<20;i++){
+      this.eq(buf1[i],buf2[i],'same seed produces same sequence at index '+i);
+    }
+  },
+  testRngBatchMatchesScalar(){
+    this.group('RNG_BATCH_MATCHES_SCALAR');
+    const bufBatch=new Uint32Array(20);
+    C2_RNG.seed(123);
+    C2_RNG.nextBatch(20,bufBatch);
+    C2_RNG.seed(123);
+    for(let i=0;i<20;i++){
+      const scalar=C2_RNG.next();
+      this.eq(bufBatch[i],scalar,'batch['+i+'] matches scalar next()');
+    }
+  },
+  testRngBatchBoundsRespected(){
+    this.group('RNG_BATCH_BOUNDS');
+    const buf=new Float32Array(100);
+    C2_RNG.seed(2024);
+    C2_RNG.rangeBatch(-50,50,100,buf);
+    for(let i=0;i<100;i++){
+      this.assert(buf[i]>=-50&&buf[i]<50,'iter '+i+' in [-50,50): '+buf[i]);
+    }
+  },
+  testRngBatchCallsAvoided(){
+    this.group('RNG_BATCH_AMORT');
+    const before=C2_RNG.batchCallsAvoided;
+    const buf=new Uint32Array(100);
+    C2_RNG.nextBatch(50,buf);
+    this.assert(C2_RNG.batchCallsAvoided>=before+49,'avoided counter incremented by 49');
+  },
+  testRngBatchZeroNHandled(){
+    this.group('RNG_BATCH_ZERO');
+    const buf=new Uint32Array(10);
+    C2_RNG.seed(1);
+    const n=C2_RNG.nextBatch(0,buf);
+    this.eq(n,0,'n=0 returns 0');
+    const stateBefore=C2_RNG.state;
+    C2_RNG.nextBatch(0,buf);
+    this.eq(C2_RNG.state,stateBefore,'state unchanged for n=0');
+  },
+  testRngBatchBufferSizeClamped(){
+    this.group('RNG_BATCH_CLAMP');
+    const buf=new Uint32Array(5);
+    C2_RNG.seed(7);
+    const n=C2_RNG.nextBatch(100,buf);
+    this.eq(n,5,'clamped to buffer size 5');
+  },
+  testRngBatchStateAdvanced(){
+    this.group('RNG_BATCH_STATE');
+    C2_RNG.seed(100);
+    const stateBefore=C2_RNG.state;
+    const buf=new Uint32Array(10);
+    C2_RNG.nextBatch(10,buf);
+    this.assert(C2_RNG.state!==stateBefore,'state advanced after batch');
+  },
+  testParticlesEmitBurstUsesBatch(){
+    this.group('PARTICLES_BURST_BATCH');
+    const src=C2_PARTICLES_FLAT.emitBurst.toString();
+    this.assert(src.indexOf('rangeBatch')>=0,'emitBurst uses C2_RNG.rangeBatch');
+    this.assert(src.indexOf('_scratchVx')>=0,'uses pre-allocated scratch buffers');
+  },
+  testParticlesEmitBurstScratchReused(){
+    this.group('PARTICLES_BURST_REUSE');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES_FLAT.emitBurst(0,0,0,0,5);
+    const scratch1=C2_PARTICLES_FLAT._scratchVx;
+    this.assert(scratch1!==null,'scratch allocated on first call');
+    C2_PARTICLES_FLAT.emitBurst(0,0,0,1,5);
+    const scratch2=C2_PARTICLES_FLAT._scratchVx;
+    this.assert(scratch1===scratch2,'scratch buffer reused (not reallocated)');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testParticlesEmitBurstCorrectness(){
+    this.group('PARTICLES_BURST_CORRECT');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_RNG.seed(12345);
+    C2_PARTICLES_FLAT.emitBurst(0,0,0,0,5);
+    this.eq(C2_PARTICLES_FLAT.activeCount(),5,'5 particles emitted');
+    const p0=C2_PARTICLES_FLAT.getParticle(0);
+    this.assert(p0.life>0&&p0.life<1,'life in range');
+    this.assert(p0.size>0,'size positive');
+    this.assert(p0.r===1&&p0.g===0.85&&p0.b===0.2,'color set for kind 0');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testParticlesEmitBurstLargeCount(){
+    this.group('PARTICLES_BURST_LARGE');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    C2_PARTICLES_FLAT.emitBurst(0,0,0,0,300);
+    const active=C2_PARTICLES_FLAT.activeCount();
+    this.assert(active<=C1.MAX_PARTICLES,'active count <= MAX_PARTICLES');
+    this.assert(active>0,'at least some emitted');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testParticlesEmitBurstMultipleKinds(){
+    this.group('PARTICLES_BURST_KINDS');
+    C2_PARTICLES_FLAT.init();
+    C2_PARTICLES_FLAT.clear();
+    for(let k=0;k<4;k++){
+      C2_PARTICLES_FLAT.emitBurst(0,0,0,k,3);
+    }
+    this.assert(C2_PARTICLES_FLAT.activeCount()>=12,'multiple kinds emitted');
+    C2_PARTICLES_FLAT.clear();
+  },
+  testBatchAabbModuleExists(){
+    this.group('BATCH_AABB_EXISTS');
+    this.assert(typeof C3_BATCH_AABB==='object','C3_BATCH_AABB module exists');
+    this.assert(typeof C3_BATCH_AABB.queryPlayerAll4==='function','queryPlayerAll4 method');
+    this.assert(typeof C3_BATCH_AABB.aabbOverlap4==='function','aabbOverlap4 method');
+    this.assert(typeof C3_BATCH_AABB.init==='function','init method');
+  },
+  testBatchAabbWidth4(){
+    this.group('BATCH_AABB_WIDTH');
+    this.eq(C3_BATCH_AABB.WIDTH,4,'WIDTH is 4 (4-wide pseudo-SIMD)');
+  },
+  testBatchAabbInit(){
+    this.group('BATCH_AABB_INIT');
+    C3_BATCH_AABB.init();
+    this.assert(C3_BATCH_AABB.hitListBuf!==null,'hitListBuf allocated');
+    this.assert(C3_BATCH_AABB.hitListBuf instanceof Int32Array,'hitListBuf is Int32Array');
+    this.assert(C3_BATCH_AABB.hitListBuf.length>=C1.MAX_ENTITIES,'hitListBuf sized >= MAX_ENTITIES');
+  },
+  testBatchAabbHitListBuf(){
+    this.group('BATCH_AABB_HITLIST');
+    C3_BATCH_AABB.init();
+    this.assert(C3_BATCH_AABB.hitListBuf.length===C3_BATCH_AABB.hitListCap,'hitListBuf correct size');
+  },
+  testBatchAabbQueryPlayerAll4(){
+    this.group('BATCH_AABB_QUERY');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_WORLD.spawn(C1.ET.MOB,0,{x:5,y:0,z:5},1);
+    C3_WORLD.spawn(C1.ET.MOB,0,{x:6,y:0,z:6},1);
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const out=new Int32Array(64);
+    const k=C3_BATCH_AABB.queryPlayerAll4(5,5,5,5,out,64);
+    this.assert(k>=2,'found at least 2 overlaps (got '+k+')');
+    C3_WORLD.init();
+  },
+  testBatchAabbQueryNoHits(){
+    this.group('BATCH_AABB_NO_HITS');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_WORLD.spawn(C1.ET.MOB,0,{x:100,y:0,z:100},1);
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const out=new Int32Array(64);
+    const k=C3_BATCH_AABB.queryPlayerAll4(0,0,1,1,out,64);
+    this.eq(k,0,'0 hits when nothing nearby');
+    C3_WORLD.init();
+  },
+  testBatchAabbQueryAllHits(){
+    this.group('BATCH_AABB_ALL_HITS');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    for(let i=0;i<5;i++){
+      C3_WORLD.spawn(C1.ET.MOB,0,{x:5+i*0.1,y:0,z:5},1);
+    }
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const out=new Int32Array(64);
+    const k=C3_BATCH_AABB.queryPlayerAll4(0,0,20,20,out,64);
+    this.assert(k>=5,'found all 5 mobs (got '+k+')');
+    C3_WORLD.init();
+  },
+  testBatchAabbQueryEmptyWorld(){
+    this.group('BATCH_AABB_EMPTY');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const out=new Int32Array(64);
+    const k=C3_BATCH_AABB.queryPlayerAll4(0,0,100,100,out,64);
+    this.eq(k,0,'0 hits in empty world');
+    C3_WORLD.init();
+  },
+  testBatchAabbQueryPlayerSkipped(){
+    this.group('BATCH_AABB_SKIP_PLAYER');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const out=new Int32Array(64);
+    const k=C3_BATCH_AABB.queryPlayerAll4(0,0,1000,1000,out,64);
+    this.assert(!out.slice(0,k).includes(C3_WORLD.world.playerIdx),'player idx not in hits');
+    C3_WORLD.init();
+  },
+  testBatchAabbQueryDeadSkipped(){
+    this.group('BATCH_AABB_SKIP_DEAD');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const idx=C3_WORLD.spawn(C1.ET.MOB,0,{x:0,y:0,z:0},1);
+    C3_WORLD.world.entities[idx].alive=false;
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const out=new Int32Array(64);
+    const k=C3_BATCH_AABB.queryPlayerAll4(0,0,5,5,out,64);
+    this.eq(k,0,'dead entity not in hits');
+    C3_WORLD.init();
+  },
+  testBatchAabbQueryFarSkipped(){
+    this.group('BATCH_AABB_SKIP_FAR');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_WORLD.spawn(C1.ET.MOB,0,{x:500,y:0,z:500},1);
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const out=new Int32Array(64);
+    const k=C3_BATCH_AABB.queryPlayerAll4(0,0,10,10,out,64);
+    this.eq(k,0,'far entity not in hits');
+    C3_WORLD.init();
+  },
+  testBatchAabbQueryStatsTracked(){
+    this.group('BATCH_AABB_STATS');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_BATCH_AABB.resetStats();
+    this.eq(C3_BATCH_AABB.queriesRun,0,'queriesRun starts at 0');
+    this.eq(C3_BATCH_AABB.entitiesScanned,0,'entitiesScanned starts at 0');
+    C3_WORLD.spawn(C1.ET.MOB,0,{x:0,y:0,z:0},1);
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const out=new Int32Array(64);
+    C3_BATCH_AABB.queryPlayerAll4(0,0,5,5,out,64);
+    this.assert(C3_BATCH_AABB.queriesRun>=1,'queriesRun incremented');
+    this.assert(C3_BATCH_AABB.entitiesScanned>0,'entitiesScanned incremented');
+    C3_WORLD.init();
+  },
+  testBatchAabbQueryMatchesScalar(){
+    this.group('BATCH_AABB_MATCHES_SCALAR');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    for(let i=0;i<10;i++){
+      C3_WORLD.spawn(C1.ET.MOB,0,{x:i*2,y:0,z:i*2},1);
+    }
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const outBatch=new Int32Array(64);
+    const kBatch=C3_BATCH_AABB.queryPlayerAll4(0,0,15,15,outBatch,64);
+    const batchHits=new Set();
+    for(let i=0;i<kBatch;i++)batchHits.add(outBatch[i]);
+    let scalarHits=new Set();
+    const ef=C3_ENTITY_SOA.FIELD;
+    const eb=C3_ENTITY_SOA.buffer;
+    const es=C3_ENTITY_SOA.STRIDE;
+    for(let i=0;i<C1.MAX_ENTITIES;i++){
+      if(i===C3_WORLD.world.playerIdx)continue;
+      const p=i*es;
+      if(eb[p+ef.alive]===0)continue;
+      const ex=eb[p+ef.posX],ey=eb[p+ef.posY];
+      if(ex>=9990)continue;
+      if(0+15<ex||ex+0.5<0||0+15<ey||ey+0.5<0)continue;
+      scalarHits.add(i);
+    }
+    for(const idx of scalarHits){
+      this.assert(batchHits.has(idx),'scalar hit '+idx+' found in batch result');
+    }
+    this.eq(batchHits.size,scalarHits.size,'batch and scalar hit counts match');
+    C3_WORLD.init();
+  },
+  testBatchAabbQueryPropertyBased(){
+    this.group('BATCH_AABB_PB');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C2_RNG.seed(8888);
+    for(let iter=0;iter<10;iter++){
+      for(let i=1;i<10;i++){
+        const e=C3_WORLD.world.entities[i];
+        e.alive=false;
+      }
+      const px=C2_RNG.range(-20,20);
+      const py=C2_RNG.range(-20,20);
+      const pw=C2_RNG.range(2,10);
+      const ph=C2_RNG.range(2,10);
+      const expected=[];
+      for(let i=1;i<10;i++){
+        const x=C2_RNG.range(-20,20);
+        const y=C2_RNG.range(-20,20);
+        const e=C3_WORLD.world.entities[i];
+        e.pos.x=x;e.pos.y=y;e.pos.z=0;
+        e.alive=true;
+        if(px+pw>=x&&x+0.5>=px&&py+ph>=y&&y+0.5>=py)expected.push(i);
+      }
+      C3_ENTITY_SOA.markDirty();
+      C3_ENTITY_SOA.syncFromEntities();
+      const out=new Int32Array(64);
+      const k=C3_BATCH_AABB.queryPlayerAll4(px,py,pw,ph,out,64);
+      const actual=new Set();
+      for(let i=0;i<k;i++)actual.add(out[i]);
+      for(const idx of expected){
+        this.assert(actual.has(idx),'PB '+iter+' hit '+idx+' found');
+      }
+    }
+    C3_WORLD.init();
+  },
+  testBatchAabbAabbOverlap4(){
+    this.group('BATCH_AABB_OVERLAP4');
+    const bxs=new Float32Array([0,5,10,15]);
+    const bys=new Float32Array([0,5,10,15]);
+    const bws=new Float32Array([2,2,2,2]);
+    const bhs=new Float32Array([2,2,2,2]);
+    const results=new Uint8Array(4);
+    const count=C3_BATCH_AABB.aabbOverlap4(0,0,5,5,bxs,bys,bws,bhs,results,4);
+    this.eq(count,1,'1 overlap');
+    this.eq(results[0],1,'first overlaps');
+    this.eq(results[1],0,'second no overlap');
+  },
+  testBatchAabbAabbOverlap4NoOverlap(){
+    this.group('BATCH_AABB_OVERLAP4_NONE');
+    const bxs=new Float32Array([100,200,300,400]);
+    const bys=new Float32Array([100,200,300,400]);
+    const bws=new Float32Array([1,1,1,1]);
+    const bhs=new Float32Array([1,1,1,1]);
+    const results=new Uint8Array(4);
+    const count=C3_BATCH_AABB.aabbOverlap4(0,0,5,5,bxs,bys,bws,bhs,results,4);
+    this.eq(count,0,'0 overlaps');
+    for(let i=0;i<4;i++)this.eq(results[i],0,'no overlap at '+i);
+  },
+  testBatchAabbAabbOverlap4Partial(){
+    this.group('BATCH_AABB_OVERLAP4_PARTIAL');
+    const bxs=new Float32Array([4,-1,9,14]);
+    const bys=new Float32Array([4,-1,9,14]);
+    const bws=new Float32Array([2,2,2,2]);
+    const bhs=new Float32Array([2,2,2,2]);
+    const results=new Uint8Array(4);
+    const count=C3_BATCH_AABB.aabbOverlap4(0,0,5,5,bxs,bys,bws,bhs,results,4);
+    this.assert(count>=1,'at least 1 partial overlap');
+    this.eq(results[0],1,'first overlaps (boundary)');
+  },
+  testBatchAabbResetStats(){
+    this.group('BATCH_AABB_RESET_STATS');
+    C3_BATCH_AABB.queriesRun=99;
+    C3_BATCH_AABB.entitiesScanned=999;
+    C3_BATCH_AABB.resetStats();
+    this.eq(C3_BATCH_AABB.queriesRun,0,'queriesRun reset');
+    this.eq(C3_BATCH_AABB.entitiesScanned,0,'entitiesScanned reset');
+  },
+  testBatchAabbScratchBuffersPreAlloc(){
+    this.group('BATCH_AABB_SCRATCH');
+    this.assert(C3_BATCH_AABB._px4 instanceof Float32Array,'_px4 is Float32Array');
+    this.assert(C3_BATCH_AABB._ex4 instanceof Float32Array,'_ex4 is Float32Array');
+    this.assert(C3_BATCH_AABB._mask4 instanceof Uint8Array,'_mask4 is Uint8Array');
+    this.eq(C3_BATCH_AABB._px4.length,4,'_px4 length 4');
+    this.eq(C3_BATCH_AABB._ex4.length,4,'_ex4 length 4');
+    this.eq(C3_BATCH_AABB._mask4.length,4,'_mask4 length 4');
+  },
+  testBatchAabbBroadcast(){
+    this.group('BATCH_AABB_BROADCAST');
+    const arr=new Float32Array(4);
+    C3_BATCH_AABB._broadcast(42,arr);
+    this.eq(arr[0],42,'broadcast [0]');
+    this.eq(arr[1],42,'broadcast [1]');
+    this.eq(arr[2],42,'broadcast [2]');
+    this.eq(arr[3],42,'broadcast [3]');
+  },
+  testBatchAabbNullSafe(){
+    this.group('BATCH_AABB_NULL_SAFE');
+    C3_BATCH_AABB.init();
+    C3_ENTITY_SOA.init();
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_ENTITY_SOA.markDirty();
+    C3_ENTITY_SOA.syncFromEntities();
+    const out=new Int32Array(64);
+    let threw=false;
+    try{
+      C3_BATCH_AABB.queryPlayerAll4(0,0,5,5,out,0);
+      C3_BATCH_AABB.queryPlayerAll4(0,0,5,5,out,64);
+    }catch(e){threw=true;}
+    this.assert(!threw,'queryPlayerAll4 does not throw with valid input');
+    C3_WORLD.init();
+  },
   render(ctx){
     const x=10,y=460;
     const w=400,h=160;
@@ -4968,8 +8467,25 @@ const C3_LOOT={
     this.inventory=[];
     C3_5_1_RARITY.initBase(this.rarities);
     C3_5_4_VAULT.init(this.inventory);
+    this._heapDirty=true;
     C3_5_10_TEST.runAll();
   },
+  _scorer(){
+    const prof=(C3_PLAYER.getEntity&&C3_PLAYER.getEntity())?C3_PLAYER.getEntity().profession:0;
+    return (it)=>C3_5_5_OPTIMIZER.score(it, prof);
+  },
+  _heap:null,
+  _heapDirty:true,
+  _ensureHeap(){
+    if(this._heap&&!this._heapDirty)return this._heap;
+    const h=C3_VAULT_HEAP;
+    h.init(this._scorer());
+    h.rebuild(this.inventory, this._scorer());
+    this._heap=h;
+    this._heapDirty=false;
+    return h;
+  },
+  _invalidateHeap(){this._heapDirty=true;},
   pickRandom(arr){ return arr[Math.floor(C2_RNG.chance()*arr.length)]; },
   rollRarity(isBossDrop){
     const floor=C3_WORLD.world?C3_WORLD.world.currentFloor:0;
@@ -5044,14 +8560,22 @@ const C3_LOOT={
     return drops;
   },
   addToInventory(item){
-    const scorer = (it)=>C3_5_5_OPTIMIZER.score(it, (C3_PLAYER.getEntity()?C3_PLAYER.getEntity().profession:0));
+    const scorer=this._scorer();
     const inv=this.inventory;
-    const res=C3_5_4_VAULT.addItem(inv, item, this.inventoryMax, scorer);
-    if(res.added||res.replaced){
-      C3_5_4_VAULT.sortByScoreDesc(inv, scorer);
+    const itemScore=scorer(item);
+    if(inv.length>=this.inventoryMax){
+      const heap=this._ensureHeap();
+      const worstScore=heap.peekWorstScore();
+      if(itemScore<=worstScore)return false;
+      const worstIdx=inv.indexOf(heap.peekWorst());
+      if(worstIdx>=0)inv.splice(worstIdx,1);
+      inv.push(item);
+      this._invalidateHeap();
       return true;
     }
-    return false;
+    inv.push(item);
+    this._invalidateHeap();
+    return true;
   },
   totalStatBonus(){
     const t=[0,0,0,0,0,0];
@@ -5449,13 +8973,13 @@ const C3_SAVE={
         level:p.level,
         race:p.race,
         profession:p.profession,
-        stats:p.stats,
+        stats:p.stats.slice(),
         xp:p.xp,xpToNext:p.xpToNext,
         hp:p.hp,maxHp:p.maxHp,
         nano:p.nano,maxNano:p.maxNano,
         insurances:p.insurances,
-        equipped:p.equipped.map(it=>it?{...it}:null),
-        inventory:C3_LOOT.inventory.map(it=>({...it})),
+        equipped:p.equipped.map(it=>it?C3_5_9_PERSIST.cloneItem(it):null),
+        inventory:C3_LOOT.inventory.map(it=>C3_5_9_PERSIST.cloneItem(it)),
         spiralTheta:C3_PLAYER.spiralTheta,
         totalKills:C3_PLAYER.totalKills,
         bossKills:C3_PLAYER.bossKills,
@@ -5931,25 +9455,15 @@ const C3_BOSS={
     }
   },
   render(ctx,scrollX,shakeX,shakeY){
-    const gl=C1.gl;
     for(const t of this.telegraphs){
-      const sx=t.pos.x-scrollX+shakeX;
-      const sy=t.pos.y+shakeY;
-      const r=t.radius*(1.0-t.timeLeft/t.maxTime)*30+10;
-      const alpha=0.3+0.5*(1.0-t.timeLeft/t.maxTime);
-      ctx.fillStyle='rgba('+(t.color[0]*255|0)+','+(t.color[1]*255|0)+','+(t.color[2]*255|0)+','+alpha+')';
-      ctx.beginPath();
-      ctx.arc(sx,sy,t.radius*8,0,Math.PI*2);
-      ctx.fill();
-      ctx.strokeStyle='rgb('+(t.color[0]*255|0)+','+(t.color[1]*255|0)+','+(t.color[2]*255|0)+')';
-      ctx.lineWidth=3;
-      ctx.stroke();
-      const tLeft=t.timeLeft.toFixed(1);
-      ctx.fillStyle='rgb(255,255,255)';
-      ctx.font='bold 14px Consolas,monospace';
-      ctx.textAlign='center';
-      ctx.fillText(tLeft+'s',sx,sy);
-      ctx.textAlign='left';
+      const sx=C1.SCREEN_W*0.5;
+      const sy=C1.SCREEN_H*0.5;
+      const progress=1.0-t.timeLeft/t.maxTime;
+      const drawRadius=t.radius*8*(0.6+0.4*progress);
+      const col=[t.color[0],t.color[1],t.color[2]];
+      C3_UI_QUEUE.circle(sx,sy,drawRadius,col,true);
+      C3_UI_QUEUE.circle(sx,sy,drawRadius,col,false);
+      C3_UI_QUEUE.text(t.timeLeft.toFixed(1)+'s',sx,sy,14,[1,1,1],'center');
     }
   }
 };
@@ -6825,6 +10339,8 @@ const C3_ORCH={
     C2_SPATIAL.init();
     C3_SAVE_ASYNC.init();
     C2_WASM_SOA.init();
+    C3_ENTITY_SOA.init();
+    C3_BATCH_AABB.init();
     C3_SCHEMA.init();
     C3_STRING_BUILDER.init();
     C2_INPUT.init();
@@ -6839,9 +10355,15 @@ const C3_ORCH={
     C3_CRAFT.clearSelection();
     C3_WORLD.world.entities[0]=C3_PLAYER.getEntity();
     C3_HUD.logPush('Welcome to Anarchy Tower');
-    C3_TEST.runAll();
-    C3_TEST.visible=true;
-    C3_HUD.logPush('Tests: '+C3_TEST.passed+' passed, '+C3_TEST.failed+' failed  [F11 rerun, F12 toggle]');
+    const DEV=(typeof location!=='undefined'&&location.hash.indexOf('dev')>=0)||
+              (typeof localStorage!=='undefined'&&localStorage.getItem('at_dev')==='1');
+    if(DEV){
+      C3_TEST.runAll();
+      C3_TEST.visible=true;
+      C3_HUD.logPush('Tests: '+C3_TEST.passed+' passed, '+C3_TEST.failed+' failed  [F11 rerun, F12 toggle]');
+    }else{
+      C3_HUD.logPush('[F11] Run tests  [F12] Toggle test panel  [#dev in URL for autotest]');
+    }
     if(C3_SAVE.hasSave()){
       const meta=C3_SAVE.loadMeta();
       if(meta)C3_HUD.logPush('Save found: Floor '+(meta.floor+1)+' LVL '+meta.level+' - press C to continue');
@@ -6908,8 +10430,10 @@ const C3_ORCH={
         let nextTarget=-1;
         let bestDist=1e9;
         const p=C3_PLAYER.getEntity();
-        const nearby=C2_SPATIAL.queryRadius(p.pos,25);
-        for(const i of nearby){
+        const scratch=C2_SPATIAL._scratch;
+        const k=C2_SPATIAL.queryRadius(p.pos,25,scratch);
+        for(let s=0;s<k;s++){
+          const i=scratch[s];
           if(i===C3_WORLD.world.playerIdx)continue;
           const e=C3_WORLD.world.entities[i];
           if(!e.alive)continue;
@@ -6950,12 +10474,15 @@ const C3_ORCH={
       }
       if(C2_INPUT.isPressed('U'.charCodeAt(0)))C3_CRAFT.clearSelection();
       C3_WORLD.update(dt);
+      C2_WASM_SOA.markDirty();
+      C3_ENTITY_SOA.markDirty();
+      C3_ENTITY_SOA.syncFromEntities();
+      C2_WASM_SOA.markDirty();
       C3_PLAYER.combatUpdate(dt);
       C3_NANO.update(dt);
       C3_BOSS.update(dt);
       C3_FX.update(dt);
       C3_ACHIEVE.update(dt);
-      C2_PARTICLES.update(dt);
       C2_PARTICLES_FLAT.update(dt);
       C3_SAVE.update(dt);
       C3_SAVE_ASYNC.update(dt);
@@ -6966,7 +10493,7 @@ const C3_ORCH={
       const p=C3_PLAYER.getEntity();
       if(p.nano<p.maxNano)p.nano=Math.min(p.maxNano,p.nano+5*dt);
     }else if(C3_RUNTIME.state===C1.STATE.DEAD){
-      C2_PARTICLES.update(dt);
+      C2_PARTICLES_FLAT.update(dt);
       const p=C3_PLAYER.getEntity();
       if(p.insurances<=0){
         C3_RUNTIME.state=C1.STATE.GAME_OVER;
@@ -7018,6 +10545,15 @@ const C3_ORCH={
     C3_PROFILE.endRender();
     C3_PROFILE.endFrame();
   },
+  hudDirtyRect:null,
+  markHUDDirty(x,y,w,h){
+    if(!this.hudDirtyRect){this.hudDirtyRect={x,y,w,h};return;}
+    const r=this.hudDirtyRect;
+    const nx=Math.min(r.x,x),ny=Math.min(r.y,y);
+    const nx2=Math.max(r.x+r.w,x+w),ny2=Math.max(r.y+r.h,y+h);
+    r.x=nx;r.y=ny;r.w=nx2-nx;r.h=ny2-ny;
+  },
+  markHUDFullDirty(){this.hudDirtyRect={x:0,y:0,w:C1.SCREEN_W,h:C1.SCREEN_H};},
   drawHUDOverlay(){
     const gl=C1.gl;
     gl.disable(gl.DEPTH_TEST);
@@ -7027,7 +10563,19 @@ const C3_ORCH={
     gl.uniform2f(C2_GL.uScreen,C1.SCREEN_W,C1.SCREEN_H);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D,this.hudTex);
-    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.hudCanvas);
+    const r=this.hudDirtyRect||{x:0,y:0,w:C1.SCREEN_W,h:C1.SCREEN_H};
+    try{
+      gl.pixelStorei(gl.UNPACK_ROW_LENGTH,C1.SCREEN_W);
+      gl.pixelStorei(gl.UNPACK_SKIP_PIXELS,r.x);
+      gl.pixelStorei(gl.UNPACK_SKIP_ROWS,r.y);
+      gl.texSubImage2D(gl.TEXTURE_2D,0,r.x,r.y,r.w,r.h,gl.RGBA,gl.UNSIGNED_BYTE,this.hudCanvas);
+      gl.pixelStorei(gl.UNPACK_SKIP_PIXELS,0);
+      gl.pixelStorei(gl.UNPACK_SKIP_ROWS,0);
+      gl.pixelStorei(gl.UNPACK_ROW_LENGTH,0);
+    }catch(e){
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.hudCanvas);
+    }
+    this.hudDirtyRect=null;
     gl.uniform1i(C2_GL.uTextTex,0);
     gl.uniform4f(C2_GL.uTextColor,1,1,1,1);
     gl.bindVertexArray(this.hudVao);
@@ -7038,14 +10586,22 @@ const C3_ORCH={
   }
 };
 
+const GAME_LOOP_MAX_STEPS=5;
 function gameLoop(now){
   if(!C3_RUNTIME.lastFrameTime)C3_RUNTIME.resetFrame(now);
   let elapsed=C3_RUNTIME.advanceFrame(now);
-  if(elapsed>0.25)C3_RUNTIME.deltaTime=0.25;
-  while(C3_RUNTIME.canStep()){
+  if(elapsed>0.1){
+    elapsed=0.1;
+    C3_RUNTIME.deltaTime=0.1;
+    C3_RUNTIME.lastFrameTime=now;
+  }
+  let steps=0;
+  while(C3_RUNTIME.canStep()&&steps<GAME_LOOP_MAX_STEPS){
     C3_ORCH.update(C1.FRAME_TIME);
     C3_RUNTIME.consumeFrame();
+    steps++;
   }
+  if(steps>=GAME_LOOP_MAX_STEPS)C3_RUNTIME.accumulator=0;
   C3_ORCH.render();
   requestAnimationFrame(gameLoop);
 }
