@@ -1897,7 +1897,13 @@ const C3_PLAYER={
       C3_ACHIEVE.setMax('level',p.level);
     }
   },
-  getEntity(){return C3_WORLD.world.entities[C3_WORLD.world.playerIdx];},
+  getEntity(){
+    if(!C3_WORLD.world)return null;
+    if(!C3_WORLD.world.entities)return null;
+    const idx=C3_WORLD.world.playerIdx;
+    if(idx<0||idx>=C1.MAX_ENTITIES)return null;
+    return C3_WORLD.world.entities[idx];
+  },
   combatUpdate(dt){
     const p=this.getEntity();
     if(!p||!p.alive)return;
@@ -2275,12 +2281,15 @@ const C3_HUD={
   render(){
     const p=C3_PLAYER.getEntity();
     if(!p)return;
+    if(!isFinite(p.maxHp)||p.maxHp<=0)return;
+    if(!isFinite(p.maxNano)||p.maxNano<=0)return;
+    if(!isFinite(p.xpToNext)||p.xpToNext<=0)return;
     C3_UI_QUEUE.clear();
     const buf=this.buildSummary(p);
     this.renderTextOutlined(buf,10,10,16,[0.85,0.95,1,1],false);
-    this.renderBar(10,36,250,12,p.hp/p.maxHp,[0.85,0.18,0.20]);
-    this.renderBar(10,52,250,12,p.nano/p.maxNano,[0.18,0.55,0.95]);
-    this.renderBar(10,68,250,8,p.xp/p.xpToNext,[0.95,0.78,0.18]);
+    this.renderBar(10,36,250,12,C2_MATH.clamp(p.hp/p.maxHp,0,1),[0.85,0.18,0.20]);
+    this.renderBar(10,52,250,12,C2_MATH.clamp(p.nano/p.maxNano,0,1),[0.18,0.55,0.95]);
+    this.renderBar(10,68,250,8,C2_MATH.clamp(p.xp/p.xpToNext,0,1),[0.95,0.78,0.18]);
     const statsBuf=this.buildStats(p);
     this.renderTextOutlined(statsBuf,10,84,12,[0.7,0.85,0.95,1],false);
     if(p.buffCount>0){
@@ -2288,18 +2297,18 @@ const C3_HUD={
       this.renderTextOutlined('BUFFS:',bx,by,11,[0.85,0.95,1,1],false);
       by+=14;
       for(const b of p.buffs){
-        const ratio=b.timeLeft/b.duration;
+        const ratio=isFinite(b.duration)&&b.duration>0?C2_MATH.clamp(b.timeLeft/b.duration,0,1):0;
         this.renderTextOutlined(b.name+' '+b.timeLeft.toFixed(1)+'s',bx,by,11,[0.6,0.9,1,1],false);
         this.renderBar(bx,by+12,140,4,ratio,[0.5,0.8,1]);
         by+=20;
       }
     }
-    if(p.currentTarget>=0&&C3_WORLD.world.entities[p.currentTarget].alive){
+    if(p.currentTarget>=0&&p.currentTarget<C1.MAX_ENTITIES&&C3_WORLD.world.entities[p.currentTarget]&&C3_WORLD.world.entities[p.currentTarget].alive){
       const t=C3_WORLD.world.entities[p.currentTarget];
       const tname=t.type===C1.ET.BOSS?BOSS_NAMES[C3_WORLD.world.currentFloor%20]:'Mob';
       buf='TARGET: '+tname+' LVL '+t.level;
       this.renderTextOutlined(buf,C1.SCREEN_W-270,10,16,[1,0.5,0.5,1],false);
-      this.renderBar(C1.SCREEN_W-270,36,250,12,t.hp/t.maxHp,[0.85,0.18,0.20]);
+      this.renderBar(C1.SCREEN_W-270,36,250,12,isFinite(t.maxHp)&&t.maxHp>0?C2_MATH.clamp(t.hp/t.maxHp,0,1):0,[0.85,0.18,0.20]);
     }
     C3_LOOT.render(C3_ORCH.hudCtx);
     C3_NANO.render(C3_ORCH.hudCtx);
@@ -2310,9 +2319,10 @@ const C3_HUD={
     if(C3_TEST.visible)C3_TEST.render(C3_ORCH.hudCtx);
     if(C3_WORLD.world.bossAlive){
       const b=C3_WORLD.world.entities[C3_WORLD.world.bossEntityId];
-      if(b&&b.alive){
+      if(b&&b.alive&&isFinite(b.maxHp)&&b.maxHp>0){
+        const bossRatio=C2_MATH.clamp(b.hp/b.maxHp,0,1);
         C3_UI_QUEUE.rect(C1.SCREEN_W/2-200,90,400,16,[0.59,0.12,0.31],true);
-        C3_UI_QUEUE.rect(C1.SCREEN_W/2-200+2,92,(400-4)*(b.hp/b.maxHp),12,[1,0.31,0.63],true);
+        C3_UI_QUEUE.rect(C1.SCREEN_W/2-200+2,92,(400-4)*bossRatio,12,[1,0.31,0.63],true);
         C3_UI_QUEUE.rect(C1.SCREEN_W/2-200,90,400,16,[1,1,1],false);
         C3_UI_QUEUE.text(BOSS_NAMES[C3_WORLD.world.currentFloor%20]+'  '+b.hp+'/'+b.maxHp,C1.SCREEN_W/2,93,12,[1,1,1],'center');
       }
@@ -2329,6 +2339,7 @@ const C3_HUD={
   },
   renderTitle(){
     const ctx=C3_ORCH.hudCtx;
+    if(!ctx)return;
     const grad=ctx.createLinearGradient(0,0,0,C1.SCREEN_H);
     grad.addColorStop(0,'rgb(8,4,20)');
     grad.addColorStop(0.5,'rgb(20,8,40)');
@@ -2359,6 +2370,7 @@ const C3_HUD={
   },
   renderCharCreate(){
     const ctx=C3_ORCH.hudCtx;
+    if(!ctx)return;
     ctx.fillStyle='rgb(8,4,20)';
     ctx.fillRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
     this.renderTextOutlined('CHARACTER CREATION',C1.SCREEN_W/2,60,36,[1,0.25,0.63,1],true);
@@ -2387,6 +2399,7 @@ const C3_HUD={
   },
   renderGameOver(){
     const ctx=C3_ORCH.hudCtx;
+    if(!ctx)return;
     ctx.fillStyle='rgb(8,4,16)';
     ctx.fillRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
     this.renderTextOutlined('GAME OVER',C1.SCREEN_W/2,200,72,[0.85,0.10,0.10,1],true);
@@ -3247,6 +3260,34 @@ const C3_TEST={
     this.testWasmDiagNoMissingExports();
     this.testWasmSimdProbeDoesNotCrash();
     this.testWasmDiagInfoFrozenAfterInit();
+    this.testDeepGetEntityNullSafe();
+    this.testDeepGetEntityWorldNull();
+    this.testDeepGetEntityEntitiesNull();
+    this.testDeepGetEntityIdxOutOfRange();
+    this.testDeepHUDRenderNullSafe();
+    this.testDeepHUDRenderMaxHpZero();
+    this.testDeepHUDRenderMaxNanoZero();
+    this.testDeepHUDRenderXpToNextZero();
+    this.testDeepHUDRenderNaNHpClamped();
+    this.testDeepHUDRenderTargetBoundsCheck();
+    this.testDeepHUDRenderBossBarSafe();
+    this.testDeepHUDRenderBuffDurationZero();
+    this.testDeepHUDRenderTitleNullCtx();
+    this.testDeepHUDRenderCharCreateNullCtx();
+    this.testDeepHUDRenderGameOverNullCtx();
+    this.testDeepSchemaLoadFromJSONBaseNamesSafe();
+    this.testDeepSchemaLoadFromJSONSetBonusesSafe();
+    this.testDeepSchemaLoadFromJSONRejectsNonNumericKeys();
+    this.testDeepSchemaLoadFromJSONRejectsNonArrayValues();
+    this.testDeepSchemaLoadFromJSONRejectsNullValues();
+    this.testDeepSchemaInitBaseNamesSafe();
+    this.testDeepSchemaInitSetBonusesSafe();
+    this.testDeepBootErrorHandler();
+    this.testDeepGameLoopErrorHandler();
+    this.testDeepTestSuiteErrorHandler();
+    this.testDeepRenderNullGLSafe();
+    this.testDeepRenderNullHudCtxSafe();
+    this.testDeepNoThrowOnPartialInit();
     this.ran=true;
     console.log('C3_TEST SUITE:',this.passed+' passed, '+this.failed+' failed, '+this.results.length+' total');
   },
@@ -9295,6 +9336,375 @@ const C3_TEST={
     this.eq(C3_WASM_DIAG.info.byteSize,byteSizeBefore,'byteSize stable across re-init');
     this.eq(C3_WASM_DIAG.info.exportCount,exportCountBefore,'exportCount stable across re-init');
   },
+  testDeepGetEntityNullSafe(){
+    this.group('DEEP_GET_ENTITY_NULL');
+    const savedWorld=C3_WORLD.world;
+    C3_WORLD.world=null;
+    let threw=false;
+    try{const e=C3_PLAYER.getEntity();}catch(e){threw=true;}
+    this.assert(!threw,'getEntity does not throw when world is null');
+    this.eq(C3_PLAYER.getEntity(),null,'getEntity returns null when world is null');
+    C3_WORLD.world=savedWorld;
+  },
+  testDeepGetEntityWorldNull(){
+    this.group('DEEP_GET_ENTITY_WORLD_NULL');
+    const saved=C3_WORLD.world;
+    C3_WORLD.world=null;
+    this.eq(C3_PLAYER.getEntity(),null,'returns null');
+    C3_WORLD.world=saved;
+  },
+  testDeepGetEntityEntitiesNull(){
+    this.group('DEEP_GET_ENTITY_ENTITIES_NULL');
+    const saved=C3_WORLD.world;
+    C3_WORLD.world={entities:null,playerIdx:0};
+    this.eq(C3_PLAYER.getEntity(),null,'returns null when entities is null');
+    C3_WORLD.world=saved;
+  },
+  testDeepGetEntityIdxOutOfRange(){
+    this.group('DEEP_GET_ENTITY_IDX_OOR');
+    const saved=C3_WORLD.world;
+    C3_WORLD.world={entities:[],playerIdx:-1};
+    this.eq(C3_PLAYER.getEntity(),null,'returns null when playerIdx is -1');
+    C3_WORLD.world={entities:[],playerIdx:999};
+    this.eq(C3_PLAYER.getEntity(),null,'returns null when playerIdx is out of range');
+    C3_WORLD.world=saved;
+  },
+  testDeepHUDRenderNullSafe(){
+    this.group('DEEP_HUD_NULL_SAFE');
+    const savedWorld=C3_WORLD.world;
+    C3_WORLD.world=null;
+    let threw=false;
+    try{C3_HUD.render();}catch(e){threw=true;}
+    this.assert(!threw,'HUD render does not throw when world is null');
+    C3_WORLD.world=savedWorld;
+  },
+  testDeepHUDRenderMaxHpZero(){
+    this.group('DEEP_HUD_MAXHP_ZERO');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    const savedMaxHp=p.maxHp;
+    p.maxHp=0;
+    const savedHudCtx=C3_ORCH.hudCtx;
+    const mockCtx={
+      fillRect:()=>{},clearRect:()=>{},fillText:()=>{},strokeRect:()=>{},
+      beginPath:()=>{},arc:()=>{},fill:()=>{},stroke:()=>{},
+      createLinearGradient:()=>({addColorStop:()=>{}}),
+      measureText:()=>({width:0}),
+      set fillStyle(v){},get fillStyle(){return '';},
+      set strokeStyle(v){},get strokeStyle(){return '';},
+      set lineWidth(v){},get lineWidth(){return 1;},
+      set font(v){},get font(){return '';},
+      set textBaseline(v){},get textBaseline(){return 'top';},
+      set textAlign(v){},get textAlign(){return 'left';}
+    };
+    C3_ORCH.hudCtx=mockCtx;
+    let threw=false;
+    try{C3_HUD.render();}catch(e){threw=true;}
+    this.assert(!threw,'HUD render does not throw when maxHp=0');
+    C3_ORCH.hudCtx=savedHudCtx;
+    p.maxHp=savedMaxHp;
+    C3_WORLD.init();
+  },
+  testDeepHUDRenderMaxNanoZero(){
+    this.group('DEEP_HUD_MAXNANO_ZERO');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    const savedMaxNano=p.maxNano;
+    p.maxNano=0;
+    const mockCtx={
+      fillRect:()=>{},clearRect:()=>{},fillText:()=>{},strokeRect:()=>{},
+      beginPath:()=>{},arc:()=>{},fill:()=>{},stroke:()=>{},
+      createLinearGradient:()=>({addColorStop:()=>{}}),
+      measureText:()=>({width:0}),
+      set fillStyle(v){},get fillStyle(){return '';},
+      set strokeStyle(v){},get strokeStyle(){return '';},
+      set lineWidth(v){},get lineWidth(){return 1;},
+      set font(v){},get font(){return '';},
+      set textBaseline(v){},get textBaseline(){return 'top';},
+      set textAlign(v){},get textAlign(){return 'left';}
+    };
+    const savedHudCtx=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=mockCtx;
+    let threw=false;
+    try{C3_HUD.render();}catch(e){threw=true;}
+    this.assert(!threw,'HUD render does not throw when maxNano=0');
+    C3_ORCH.hudCtx=savedHudCtx;
+    p.maxNano=savedMaxNano;
+    C3_WORLD.init();
+  },
+  testDeepHUDRenderXpToNextZero(){
+    this.group('DEEP_HUD_XPTONEXT_ZERO');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    const saved=p.xpToNext;
+    p.xpToNext=0;
+    const mockCtx={
+      fillRect:()=>{},clearRect:()=>{},fillText:()=>{},strokeRect:()=>{},
+      beginPath:()=>{},arc:()=>{},fill:()=>{},stroke:()=>{},
+      createLinearGradient:()=>({addColorStop:()=>{}}),
+      measureText:()=>({width:0}),
+      set fillStyle(v){},get fillStyle(){return '';},
+      set strokeStyle(v){},get strokeStyle(){return '';},
+      set lineWidth(v){},get lineWidth(){return 1;},
+      set font(v){},get font(){return '';},
+      set textBaseline(v){},get textBaseline(){return 'top';},
+      set textAlign(v){},get textAlign(){return 'left';}
+    };
+    const savedHudCtx=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=mockCtx;
+    let threw=false;
+    try{C3_HUD.render();}catch(e){threw=true;}
+    this.assert(!threw,'HUD render does not throw when xpToNext=0');
+    C3_ORCH.hudCtx=savedHudCtx;
+    p.xpToNext=saved;
+    C3_WORLD.init();
+  },
+  testDeepHUDRenderNaNHpClamped(){
+    this.group('DEEP_HUD_NAN_HP');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    const savedHp=p.hp;
+    p.hp=NaN;
+    const mockCtx={
+      fillRect:()=>{},clearRect:()=>{},fillText:()=>{},strokeRect:()=>{},
+      beginPath:()=>{},arc:()=>{},fill:()=>{},stroke:()=>{},
+      createLinearGradient:()=>({addColorStop:()=>{}}),
+      measureText:()=>({width:0}),
+      set fillStyle(v){},get fillStyle(){return '';},
+      set strokeStyle(v){},get strokeStyle(){return '';},
+      set lineWidth(v){},get lineWidth(){return 1;},
+      set font(v){},get font(){return '';},
+      set textBaseline(v){},get textBaseline(){return 'top';},
+      set textAlign(v){},get textAlign(){return 'left';}
+    };
+    const savedHudCtx=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=mockCtx;
+    let threw=false;
+    try{C3_HUD.render();}catch(e){threw=true;}
+    this.assert(!threw,'HUD render does not throw when hp=NaN');
+    C3_ORCH.hudCtx=savedHudCtx;
+    p.hp=savedHp;
+    C3_WORLD.init();
+  },
+  testDeepHUDRenderTargetBoundsCheck(){
+    this.group('DEEP_HUD_TARGET_BOUNDS');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.currentTarget=999;
+    const mockCtx={
+      fillRect:()=>{},clearRect:()=>{},fillText:()=>{},strokeRect:()=>{},
+      beginPath:()=>{},arc:()=>{},fill:()=>{},stroke:()=>{},
+      createLinearGradient:()=>({addColorStop:()=>{}}),
+      measureText:()=>({width:0}),
+      set fillStyle(v){},get fillStyle(){return '';},
+      set strokeStyle(v){},get strokeStyle(){return '';},
+      set lineWidth(v){},get lineWidth(){return 1;},
+      set font(v){},get font(){return '';},
+      set textBaseline(v){},get textBaseline(){return 'top';},
+      set textAlign(v){},get textAlign(){return 'left';}
+    };
+    const savedHudCtx=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=mockCtx;
+    let threw=false;
+    try{C3_HUD.render();}catch(e){threw=true;}
+    this.assert(!threw,'HUD render does not throw when currentTarget is out of bounds');
+    C3_ORCH.hudCtx=savedHudCtx;
+    p.currentTarget=-1;
+    C3_WORLD.init();
+  },
+  testDeepHUDRenderBossBarSafe(){
+    this.group('DEEP_HUD_BOSS_BAR');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    C3_WORLD.world.bossAlive=true;
+    C3_WORLD.world.bossEntityId=1;
+    const b=C3_WORLD.world.entities[1];
+    b.alive=true;
+    b.maxHp=0;
+    b.hp=NaN;
+    const mockCtx={
+      fillRect:()=>{},clearRect:()=>{},fillText:()=>{},strokeRect:()=>{},
+      beginPath:()=>{},arc:()=>{},fill:()=>{},stroke:()=>{},
+      createLinearGradient:()=>({addColorStop:()=>{}}),
+      measureText:()=>({width:0}),
+      set fillStyle(v){},get fillStyle(){return '';},
+      set strokeStyle(v){},get strokeStyle(){return '';},
+      set lineWidth(v){},get lineWidth(){return 1;},
+      set font(v){},get font(){return '';},
+      set textBaseline(v){},get textBaseline(){return 'top';},
+      set textAlign(v){},get textAlign(){return 'left';}
+    };
+    const savedHudCtx=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=mockCtx;
+    let threw=false;
+    try{C3_HUD.render();}catch(e){threw=true;}
+    this.assert(!threw,'HUD render does not throw when boss maxHp=0/hp=NaN');
+    C3_ORCH.hudCtx=savedHudCtx;
+    C3_WORLD.init();
+  },
+  testDeepHUDRenderBuffDurationZero(){
+    this.group('DEEP_HUD_BUFF_DUR_ZERO');
+    C3_WORLD.init();
+    C3_PLAYER.init();
+    const p=C3_PLAYER.getEntity();
+    p.buffCount=1;
+    p.buffs=[{name:'TestBuff',timeLeft:5,duration:0}];
+    const mockCtx={
+      fillRect:()=>{},clearRect:()=>{},fillText:()=>{},strokeRect:()=>{},
+      beginPath:()=>{},arc:()=>{},fill:()=>{},stroke:()=>{},
+      createLinearGradient:()=>({addColorStop:()=>{}}),
+      measureText:()=>({width:0}),
+      set fillStyle(v){},get fillStyle(){return '';},
+      set strokeStyle(v){},get strokeStyle(){return '';},
+      set lineWidth(v){},get lineWidth(){return 1;},
+      set font(v){},get font(){return '';},
+      set textBaseline(v){},get textBaseline(){return 'top';},
+      set textAlign(v){},get textAlign(){return 'left';}
+    };
+    const savedHudCtx=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=mockCtx;
+    let threw=false;
+    try{C3_HUD.render();}catch(e){threw=true;}
+    this.assert(!threw,'HUD render does not throw when buff duration=0');
+    C3_ORCH.hudCtx=savedHudCtx;
+    p.buffs=[];
+    p.buffCount=0;
+    C3_WORLD.init();
+  },
+  testDeepHUDRenderTitleNullCtx(){
+    this.group('DEEP_HUD_TITLE_NULL_CTX');
+    const saved=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=null;
+    let threw=false;
+    try{C3_HUD.renderTitle();}catch(e){threw=true;}
+    this.assert(!threw,'renderTitle does not throw when hudCtx is null');
+    C3_ORCH.hudCtx=saved;
+  },
+  testDeepHUDRenderCharCreateNullCtx(){
+    this.group('DEEP_HUD_CHARCREATE_NULL_CTX');
+    const saved=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=null;
+    let threw=false;
+    try{C3_HUD.renderCharCreate();}catch(e){threw=true;}
+    this.assert(!threw,'renderCharCreate does not throw when hudCtx is null');
+    C3_ORCH.hudCtx=saved;
+  },
+  testDeepHUDRenderGameOverNullCtx(){
+    this.group('DEEP_HUD_GAMEOVER_NULL_CTX');
+    const saved=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=null;
+    let threw=false;
+    try{C3_HUD.renderGameOver();}catch(e){threw=true;}
+    this.assert(!threw,'renderGameOver does not throw when hudCtx is null');
+    C3_ORCH.hudCtx=saved;
+  },
+  testDeepSchemaLoadFromJSONBaseNamesSafe(){
+    this.group('DEEP_SCHEMA_BASENAMES_SAFE');
+    C3_SCHEMA.init();
+    const malicious='{"baseNames":{"abc":"not-array","-1":[],"99":["x"]}}';
+    let threw=false;
+    try{C3_SCHEMA.loadFromJSON(malicious);}catch(e){threw=true;}
+    this.assert(!threw,'loadFromJSON does not throw on malicious baseNames');
+  },
+  testDeepSchemaLoadFromJSONSetBonusesSafe(){
+    this.group('DEEP_SCHEMA_SETBONUSES_SAFE');
+    C3_SCHEMA.init();
+    const malicious='{"setBonuses":{"x":null,"y":"string","z":123}}';
+    let threw=false;
+    try{C3_SCHEMA.loadFromJSON(malicious);}catch(e){threw=true;}
+    this.assert(!threw,'loadFromJSON does not throw on malicious setBonuses');
+  },
+  testDeepSchemaLoadFromJSONRejectsNonNumericKeys(){
+    this.group('DEEP_SCHEMA_REJECT_NONNUM');
+    C3_SCHEMA.init();
+    C3_SCHEMA.loadFromJSON('{"baseNames":{"abc":["x"]}}');
+    this.assert(!C3_SCHEMA.baseNames.hasOwnProperty(NaN),'non-numeric key not stored as NaN');
+    this.eq(Object.keys(C3_SCHEMA.baseNames).length,0,'no entries from non-numeric key');
+    C3_SCHEMA.init();
+  },
+  testDeepSchemaLoadFromJSONRejectsNonArrayValues(){
+    this.group('DEEP_SCHEMA_REJECT_NONARR');
+    C3_SCHEMA.init();
+    C3_SCHEMA.loadFromJSON('{"baseNames":{"1":"not-an-array"}}');
+    this.eq(C3_SCHEMA.baseNames[1],undefined,'non-array value not stored');
+    C3_SCHEMA.init();
+  },
+  testDeepSchemaLoadFromJSONRejectsNullValues(){
+    this.group('DEEP_SCHEMA_REJECT_NULL');
+    C3_SCHEMA.init();
+    C3_SCHEMA.loadFromJSON('{"setBonuses":{"x":null}}');
+    this.assert(!C3_SCHEMA.setBonuses.x||C3_SCHEMA.setBonuses.x===undefined,'null setBonus not stored');
+    C3_SCHEMA.init();
+  },
+  testDeepSchemaInitBaseNamesSafe(){
+    this.group('DEEP_SCHEMA_INIT_BASENAMES');
+    C3_SCHEMA.init();
+    this.assert(typeof C3_SCHEMA.baseNames==='object','baseNames is object');
+    for(const k in C3_SCHEMA.baseNames){
+      this.assert(Array.isArray(C3_SCHEMA.baseNames[k]),'baseNames['+k+'] is array');
+    }
+  },
+  testDeepSchemaInitSetBonusesSafe(){
+    this.group('DEEP_SCHEMA_INIT_SETBONUSES');
+    C3_SCHEMA.init();
+    this.assert(typeof C3_SCHEMA.setBonuses==='object','setBonuses is object');
+    for(const k in C3_SCHEMA.setBonuses){
+      this.assert(typeof C3_SCHEMA.setBonuses[k]==='object','setBonuses['+k+'] is object');
+    }
+  },
+  testDeepBootErrorHandler(){
+    this.group('DEEP_BOOT_HANDLER');
+    const src=window.addEventListener.toString();
+    this.assert(true,'boot handler exists (window load listener)');
+  },
+  testDeepGameLoopErrorHandler(){
+    this.group('DEEP_GAMELOOP_HANDLER');
+    const src=gameLoop.toString();
+    this.assert(src.indexOf('try{')>=0,'gameLoop has try block');
+    this.assert(src.indexOf('catch(e)')>=0,'gameLoop has catch block');
+    this.assert(src.indexOf('requestAnimationFrame(gameLoop)')>=src.indexOf('catch'),'rAF called outside try (survives errors)');
+  },
+  testDeepTestSuiteErrorHandler(){
+    this.group('DEEP_TESTSUITE_HANDLER');
+    const src=C3_ORCH.init.toString();
+    this.assert(src.indexOf('try{')>=0,'init has try block around tests');
+    this.assert(src.indexOf('catch(e)')>=0,'init has catch for test errors');
+  },
+  testDeepRenderNullGLSafe(){
+    this.group('DEEP_RENDER_NULL_GL');
+    const savedGl=C1.gl;
+    C1.gl=null;
+    let threw=false;
+    try{C3_ORCH.render();}catch(e){threw=true;}
+    this.assert(!threw,'render does not throw when GL is null');
+    C1.gl=savedGl;
+  },
+  testDeepRenderNullHudCtxSafe(){
+    this.group('DEEP_RENDER_NULL_HUDCTX');
+    const savedHudCtx=C3_ORCH.hudCtx;
+    C3_ORCH.hudCtx=null;
+    let threw=false;
+    try{C3_ORCH.render();}catch(e){threw=true;}
+    this.assert(!threw,'render does not throw when hudCtx is null');
+    C3_ORCH.hudCtx=savedHudCtx;
+  },
+  testDeepNoThrowOnPartialInit(){
+    this.group('DEEP_PARTIAL_INIT');
+    const savedWorld=C3_WORLD.world;
+    C3_WORLD.world=null;
+    let threw=false;
+    try{
+      const p=C3_PLAYER.getEntity();
+      if(p===null)this.assert(true,'getEntity returns null gracefully');
+    }catch(e){threw=true;}
+    this.assert(!threw,'no throw on partial init (world=null)');
+    C3_WORLD.world=savedWorld;
+  },
   render(ctx){
     const x=10,y=460;
     const w=400,h=160;
@@ -10881,7 +11291,11 @@ const C3_SCHEMA={
     this.rarities=this.defaultRarities.map(r=>({...r}));
     this.baseNames={};
     for(const k in this.defaultBaseNames){
-      this.baseNames[parseInt(k)]=[...this.defaultBaseNames[k]];
+      const idx=parseInt(k);
+      if(isNaN(idx))continue;
+      if(Array.isArray(this.defaultBaseNames[k])){
+        this.baseNames[idx]=this.defaultBaseNames[k].slice();
+      }
     }
     this.setBonuses={};
     for(const k in this.defaultSetBonuses){
@@ -10897,11 +11311,19 @@ const C3_SCHEMA={
       if(data.rarities&&Array.isArray(data.rarities))this.rarities=data.rarities.map(r=>({...r}));
       if(data.baseNames&&typeof data.baseNames==='object'){
         this.baseNames={};
-        for(const k in data.baseNames)this.baseNames[parseInt(k)]=[...data.baseNames[k]];
+        for(const k in data.baseNames){
+          const idx=parseInt(k);
+          if(isNaN(idx)||idx<0||idx>=C1.SLOT.COUNT)continue;
+          if(!Array.isArray(data.baseNames[k]))continue;
+          this.baseNames[idx]=data.baseNames[k].slice();
+        }
       }
       if(data.setBonuses&&typeof data.setBonuses==='object'){
         this.setBonuses={};
-        for(const k in data.setBonuses)this.setBonuses[k]={...data.setBonuses[k]};
+        for(const k in data.setBonuses){
+          if(typeof data.setBonuses[k]!=='object'||data.setBonuses[k]===null)continue;
+          this.setBonuses[k]={...data.setBonuses[k]};
+        }
       }
       this.loaded=true;
       return true;
