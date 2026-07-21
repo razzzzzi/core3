@@ -11810,19 +11810,36 @@ const C3_ORCH={
     C3_CRAFT.clearSelection();
     C3_WORLD.world.entities[0]=C3_PLAYER.getEntity();
     C3_HUD.logPush('Welcome to Anarchy Tower');
-    const DEV=(typeof location!=='undefined'&&location.hash.indexOf('dev')>=0)||
-              (typeof localStorage!=='undefined'&&localStorage.getItem('at_dev')==='1');
-    if(DEV){
-      try{
-        C3_TEST.runAll();
-        C3_TEST.visible=true;
-        C3_HUD.logPush('Tests: '+C3_TEST.passed+' passed, '+C3_TEST.failed+' failed  [F11 rerun, F12 toggle]');
-      }catch(e){
-        console.error('Test suite error:',e);
-        C3_HUD.logPush('Test error: '+e.message);
+    try{
+      C3_TEST.runAll();
+      C3_TEST.visible=true;
+      C3_HUD.logPush('Tests: '+C3_TEST.passed+' passed, '+C3_TEST.failed+' failed  [F11 rerun, F12 toggle]');
+      console.log('%c=== C3_TEST SUITE RESULTS ===','color:#39e06a;font-weight:bold;font-size:14px');
+      console.log('%cPassed: '+C3_TEST.passed,'color:#39e06a;font-weight:bold');
+      console.log('%cFailed: '+C3_TEST.failed,'color:'+(C3_TEST.failed>0?'#ff3b5c':'#39e06a')+';font-weight:bold');
+      console.log('Total: '+C3_TEST.results.length);
+      if(C3_TEST.failed>0){
+        console.group('%cFAILURES:','color:#ff3b5c;font-weight:bold;font-size:13px');
+        for(const r of C3_TEST.results){
+          if(!r.ok)console.warn('['+r.group+'] '+r.msg);
+        }
+        console.groupEnd();
       }
-    }else{
-      C3_HUD.logPush('[F11] Run tests  [F12] Toggle test panel  [#dev in URL for autotest]');
+      console.group('%cTest Groups:','color:#00e0ff;font-weight:bold');
+      const groups={};
+      for(const r of C3_TEST.results){
+        if(!groups[r.group])groups[r.group]={pass:0,fail:0};
+        if(r.ok)groups[r.group].pass++;else groups[r.group].fail++;
+      }
+      for(const g in groups){
+        const gr=groups[g];
+        const color=gr.fail>0?'#ff3b5c':'#39e06a';
+        console.log('%c['+g+'] '+gr.pass+' pass, '+gr.fail+' fail','color:'+color);
+      }
+      console.groupEnd();
+    }catch(e){
+      console.error('Test suite error:',e);
+      C3_HUD.logPush('Test error: '+e.message);
     }
     if(C3_SAVE.hasSave()){
       const meta=C3_SAVE.loadMeta();
@@ -11982,27 +11999,61 @@ const C3_ORCH={
   render(){
     C3_PROFILE.beginRender();
     const gl=C1.gl;
-    if(!gl||!this.hudCtx){C3_PROFILE.endRender();C3_PROFILE.endFrame();return;}
+    if(!gl){
+      const ctx2d=this.hudCtx;
+      if(ctx2d){
+        ctx2d.fillStyle='#04020a';
+        ctx2d.fillRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
+        ctx2d.fillStyle='#ff3b5c';
+        ctx2d.font='bold 16px Consolas,monospace';
+        ctx2d.fillText('WebGL2 not available. Check browser console (F12) for errors.',20,40);
+        this.drawHUDOverlay();
+      }
+      C3_PROFILE.endRender();C3_PROFILE.endFrame();return;
+    }
+    if(!this.hudCtx){
+      gl.clearColor(0.02,0.02,0.05,1);
+      gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+      C3_PROFILE.endRender();C3_PROFILE.endFrame();return;
+    }
     gl.clearColor(0.02,0.02,0.05,1);
     gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-    if(C3_RUNTIME.state===C1.STATE.PLAYING||C3_RUNTIME.state===C1.STATE.DEAD){
-      C3_RENDER.render3D();
-      this.hudCtx.clearRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
-      C3_RENDER.renderParticlesFlat(this.hudCtx,0,0,0);
-      if(C3_RUNTIME.state===C1.STATE.PLAYING)C3_HUD.render();
-      else C3_HUD.renderDead();
-    }else if(C3_RUNTIME.state===C1.STATE.TITLE){
-      this.hudCtx.clearRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
-      C3_HUD.renderTitle();
-    }else if(C3_RUNTIME.state===C1.STATE.CHARCREATE){
-      this.hudCtx.clearRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
-      C3_HUD.renderCharCreate();
-    }else if(C3_RUNTIME.state===C1.STATE.GAME_OVER){
-      this.hudCtx.clearRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
-      C3_HUD.renderGameOver();
+    try{
+      if(C3_RUNTIME.state===C1.STATE.PLAYING||C3_RUNTIME.state===C1.STATE.DEAD){
+        C3_RENDER.render3D();
+        this.hudCtx.clearRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
+        C3_RENDER.renderParticlesFlat(this.hudCtx,0,0,0);
+        if(C3_RUNTIME.state===C1.STATE.PLAYING)C3_HUD.render();
+        else C3_HUD.renderDead();
+      }else if(C3_RUNTIME.state===C1.STATE.TITLE){
+        this.hudCtx.clearRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
+        C3_HUD.renderTitle();
+      }else if(C3_RUNTIME.state===C1.STATE.CHARCREATE){
+        this.hudCtx.clearRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
+        C3_HUD.renderCharCreate();
+      }else if(C3_RUNTIME.state===C1.STATE.GAME_OVER){
+        this.hudCtx.clearRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
+        C3_HUD.renderGameOver();
+      }
+      C3_PROFILE.render(this.hudCtx);
+      this.drawHUDOverlay();
+    }catch(e){
+      console.error('Render error:',e);
+      this.hudCtx.fillStyle='#04020a';
+      this.hudCtx.fillRect(0,0,C1.SCREEN_W,C1.SCREEN_H);
+      this.hudCtx.fillStyle='#ff3b5c';
+      this.hudCtx.font='bold 14px Consolas,monospace';
+      const lines=[
+        'RENDER ERROR: '+e.message,
+        '',
+        'State: '+C3_RUNTIME.state,
+        'Stack: '+(e.stack||'').split('\n').slice(0,4).join('\n'),
+        '',
+        'Check console (F12) for full details.'
+      ];
+      lines.forEach((l,i)=>this.hudCtx.fillText(l,20,30+i*18));
+      try{this.drawHUDOverlay();}catch(e2){}
     }
-    C3_PROFILE.render(this.hudCtx);
-    this.drawHUDOverlay();
     C3_PROFILE.endRender();
     C3_PROFILE.endFrame();
   },
@@ -12069,8 +12120,33 @@ function gameLoop(now){
     C3_ORCH.render();
   }catch(e){
     console.error('Frame error:',e);
+    showDebugOverlay('FRAME ERROR: '+e.message+'\\n'+(e.stack||'').split('\\n').slice(0,5).join('\\n'));
   }
   requestAnimationFrame(gameLoop);
+}
+
+function showDebugOverlay(msg){
+  let ov=document.getElementById('__debug_overlay');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='__debug_overlay';
+    ov.style.cssText='position:fixed;top:10px;left:10px;right:10px;bottom:10px;background:rgba(0,0,0,0.92);color:#ff7a90;font-family:Consolas,monospace;font-size:13px;padding:20px;z-index:99999;overflow:auto;white-space:pre-wrap;border:2px solid #ff3b5c;border-radius:8px;pointer-events:auto;';
+    const btn=document.createElement('button');
+    btn.textContent='RETRY BOOT';
+    btn.style.cssText='position:fixed;top:20px;right:20px;padding:10px 20px;background:#ff3b5c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;font-weight:bold;z-index:100000;';
+    btn.onclick=()=>{ov.style.display='none';try{C3_ORCH.init();C3_RUNTIME.state=C1.STATE.TITLE;}catch(e){showDebugOverlay('RETRY FAILED: '+e.message);}};
+    document.body.appendChild(ov);
+    document.body.appendChild(btn);
+  }
+  ov.textContent=msg;
+  ov.style.display='block';
+}
+
+function hideDebugOverlay(){
+  const ov=document.getElementById('__debug_overlay');
+  if(ov)ov.style.display='none';
+  const btn=document.querySelector('button[onclick*="RETRY"]');
+  if(btn)btn.remove();
 }
 
 window.addEventListener('load',async()=>{
@@ -12079,8 +12155,10 @@ window.addEventListener('load',async()=>{
     document.addEventListener('click',()=>C2_AUDIO.resume());
     document.addEventListener('keydown',()=>C2_AUDIO.resume());
     C3_ORCH.init();
+    hideDebugOverlay();
   }catch(e){
     console.error('Boot error:',e);
+    showDebugOverlay('BOOT ERROR: '+e.message+'\\n\\nStack:\\n'+(e.stack||'(no stack)')+'\\n\\nClick RETRY BOOT to attempt re-initialization.\\nCheck browser console (F12) for full test results.');
     if(typeof C3_HUD!=='undefined'&&C3_HUD.logPush)C3_HUD.logPush('Boot error: '+e.message);
   }
   requestAnimationFrame(gameLoop);
