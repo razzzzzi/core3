@@ -217,7 +217,18 @@ const C2_RNG={
   },
   range(lo,hi){return lo+(this.next()&0xFFFFFF)/0x1000000*(hi-lo);},
   rangeInt(lo,hi){if(hi<=lo)return lo;return lo+(this.next()%(hi-lo+1));},
-  chance(){return (this.next()&0xFFFFFF)/0x1000000;}
+  chance(){return (this.next()&0xFFFFFF)/0x1000000;},
+  makeStream(seed){
+    let s=(seed>>>0)||1;
+    return {
+      next(){s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return s;},
+      range(lo,hi){return lo+(this.next()&0xFFFFFF)/0x1000000*(hi-lo);},
+      rangeInt(lo,hi){if(hi<=lo)return lo;return lo+(this.next()%(hi-lo+1));},
+      chance(){return (this.next()&0xFFFFFF)/0x1000000;},
+      seed(v){s=(v>>>0)||1;},
+      get state(){return s;}
+    };
+  }
 };
 
 const C2_INPUT={
@@ -455,6 +466,8 @@ void main(){
 const C2_MESH={
   meshes:[],
   init(){this.meshes=new Array(C1.MESH.COUNT).fill(null);},
+  _instanceVBO:null,
+  setInstanceVBO(vbo){this._instanceVBO=vbo;},
   create(id,vertices,indices){
     const gl=C1.gl;
     const vbo=gl.createBuffer();
@@ -474,9 +487,17 @@ const C2_MESH={
     gl.vertexAttribPointer(2,2,gl.FLOAT,false,12*4,6*4);
     gl.enableVertexAttribArray(3);
     gl.vertexAttribPointer(3,4,gl.FLOAT,false,12*4,8*4);
+    if(this._instanceVBO){
+      gl.bindBuffer(gl.ARRAY_BUFFER,this._instanceVBO);
+      for(let r=0;r<4;r++){
+        gl.enableVertexAttribArray(4+r);
+        gl.vertexAttribPointer(4+r,4,gl.FLOAT,false,16*4,r*16);
+        gl.vertexAttribDivisor(4+r,1);
+      }
+    }
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo);
     gl.bindVertexArray(null);
-    this.meshes[id]={vao,vbo,ibo,indexCount:indices.length};
+    this.meshes[id]={vao,vbo,ibo,indexCount:indices.length,hasInstanceAttrs:!!this._instanceVBO};
   },
   generateBox(id,w,h,d){
     const hw=w*0.5,hh=h*0.5,hd=d*0.5;
@@ -1056,6 +1077,11 @@ const C2_SPATIAL={
         this.insert(i,e.pos);
       }
     }
+  },
+  remove(idx){
+    if(idx<0||idx>=C1.MAX_ENTITIES)return;
+    if(this.aliveMask)this.aliveMask[idx]=0;
+    this.entityCount=Math.max(0,this.entityCount-1);
   }
 };
 
@@ -1159,7 +1185,11 @@ const C2_WASM_SOA={
         }
         const p=i*es;
         if(eb[p+ef.alive]!==0){
-          this.writeEntity(i,eb[p+ef.posX],eb[p+ef.posZ],0.5,0.5);
+          const rawX=eb[p+ef.posX];
+          const rawZ=eb[p+ef.posZ];
+          const x=isFinite(rawX)?rawX:0;
+          const z=isFinite(rawZ)?rawZ:0;
+          this.writeEntity(i,x,z,0.5,0.5);
         }else{
           this.writeEntity(i,9999,9999,0,0);
         }
@@ -1613,6 +1643,7 @@ const C3_WORLD={
     for(let i=0;i<C1.MAX_ENTITIES;i++)this.world.entities.push(this.makeBlankEntity());
     this.freeIndices=[];
     for(let i=1;i<C1.MAX_ENTITIES;i++)this.freeIndices.push(i);
+    C2_SPATIAL.clear();
   },
   recycleIndex(idx){
     if(idx<=0||idx>=C1.MAX_ENTITIES)return;
@@ -1630,6 +1661,7 @@ const C3_WORLD={
       insurances:0,xp:0,xpToNext:0,stats:[0,0,0,0,0,0],
       race:0,profession:0,nano:0,maxNano:0,ncu:0,maxNcu:0,
       rarity:0,
+      enraged:false,dimensionalTear:false,
       equipped:new Array(C1.SLOT.COUNT).fill(null),
       buffs:[],buffCount:0,currentTarget:-1,floor:0,
       deathTimer:0,spawnTimer:0
@@ -1658,6 +1690,7 @@ const C3_WORLD={
     e.animTime=0;e.animState=0;e.currentTarget=-1;
     e.floor=this.world.currentFloor;e.deathTimer=0;e.spawnTimer=0;
     e.attackCooldown=0;e.globalCooldown=0;e.buffCount=0;
+    e.enraged=false;e.dimensionalTear=false;
     for(let j=0;j<6;j++)e.resist[j]=0;
     if(type===C1.ET.MOB){
       e.maxHp=e.hp=50+level*25;
@@ -1680,6 +1713,7 @@ const C3_WORLD={
     const i=this.acquireIndex();
     if(i<0)return -1;
     this.initEntity(this.world.entities[i],type,kind,pos,level);
+    C2_SPATIAL.insert(i,pos);
     return i;
   },
   killEntity(idx){
@@ -1689,7 +1723,8 @@ const C3_WORLD={
     e.alive=false;
     e.ai=C1.AI.DEAD;
     e.deathTimer=4.0;
-    C2_PARTICLES.emit(e.pos,1,16);
+    C2_SPATIAL.remove(idx);
+    C2_PARTICLES_FLAT.emitBurst(e.pos,1,16);
     C2_AUDIO.death();
   },
   spiralToWorld(theta){
@@ -1770,7 +1805,6 @@ const C3_WORLD={
   update(dt){
     const p=this.world.entities[this.world.playerIdx];
     if(!p)return;
-    C2_SPATIAL.rebuildFromWorld();
     if(p.alive&&p.insurances>0&&C3_RUNTIME.state===C1.STATE.PLAYING){
       const arc=this.spiralArcLength(C3_PLAYER.spiralTheta);
       if(!this.isInBossArena(C3_PLAYER.spiralTheta)||!this.world.bossAlive){
@@ -1826,7 +1860,7 @@ const C3_WORLD={
               p.hp-=dmg;
               const tname=e.type===C1.ET.BOSS?BOSS_NAMES[this.world.currentFloor%20]:'Mob';
               C3_HUD.logPush(tname+' hits you for '+dmg);
-              C2_PARTICLES.emit(p.pos,1,4);
+              C2_PARTICLES_FLAT.emitBurst(p.pos,1,4);
               C2_AUDIO.hit();
               if(p.hp<=0){
                 p.hp=0;p.alive=false;p.insurances--;
@@ -1888,7 +1922,7 @@ const C3_PLAYER={
       p.hp=p.maxHp;p.nano=p.maxNano;
       this.pendingStatPoints+=5;
       C3_HUD.logPush('Level up! Now level '+p.level);
-      C2_PARTICLES.emit(p.pos,3,16);
+      C2_PARTICLES_FLAT.emitBurst(p.pos,3,16);
       C2_AUDIO.levelUp();
       leveled=true;
     }
@@ -1909,9 +1943,27 @@ const C3_PLAYER={
     if(!p||!p.alive)return;
     p.attackCooldown-=dt;
     p.globalCooldown-=dt;
+    if(p.currentTarget<0){
+      if(C3_BATCH_AABB.hitListBuf&&C3_ENTITY_SOA.isSynced()){
+        const k=C3_BATCH_AABB.queryPlayerAll4(p.pos.x,p.pos.z,2,2,C3_BATCH_AABB.hitListBuf,C3_BATCH_AABB.hitListCap);
+        if(k>0){
+          let bestIdx=-1,bestDist=1e9;
+          for(let s=0;s<k;s++){
+            const idx=C3_BATCH_AABB.hitListBuf[s];
+            if(idx===C3_WORLD.world.playerIdx)continue;
+            const e=C3_WORLD.world.entities[idx];
+            if(!e||!e.alive)continue;
+            if(e.type!==C1.ET.MOB&&e.type!==C1.ET.BOSS)continue;
+            const d=C2_MATH.dist(e.pos,p.pos);
+            if(d<5&&d<bestDist){bestDist=d;bestIdx=idx;}
+          }
+          if(bestIdx>=0)p.currentTarget=bestIdx;
+        }
+      }
+    }
     if(p.currentTarget>=0){
       const t=C3_WORLD.world.entities[p.currentTarget];
-      if(!t.alive){p.currentTarget=-1;return;}
+      if(!t||!t.alive){p.currentTarget=-1;return;}
       const dist=C2_MATH.dist(t.pos,p.pos);
       if(dist<3.5&&p.attackCooldown<=0){
         p.attackCooldown=p.attackInterval;
@@ -1923,7 +1975,7 @@ const C3_PLAYER={
         t.hp-=dmg;
         const tname=t.type===C1.ET.BOSS?BOSS_NAMES[C3_WORLD.world.currentFloor%20]:'mob';
         C3_HUD.logPush('You hit '+tname+' for '+dmg);
-        C2_PARTICLES.emit(t.pos,0,4);
+        C2_PARTICLES_FLAT.emitBurst(t.pos,0,4);
         C2_AUDIO.shoot();
         if(t.hp<=0){
           C3_WORLD.killEntity(p.currentTarget);
@@ -1938,7 +1990,7 @@ const C3_PLAYER={
             C3_LOOT.addToInventory(item);
             C3_ACHIEVE.onItemDrop(item);
             C3_HUD.logPush('Loot: '+item.name+' (QL'+item.ql+') ['+item.rarityName+']');
-            C2_PARTICLES.emit(t.pos,3,6);
+            C2_PARTICLES_FLAT.emitBurst(t.pos,3,6);
             C2_AUDIO.menuSelect();
           }
           const swaps=C3_LOOT.autoEquip(p);
@@ -1953,7 +2005,7 @@ const C3_PLAYER={
             C3_WORLD.world.bossSpawned=false;
             C3_HUD.logPush('Boss defeated! Floor '+(C3_WORLD.world.currentFloor+1)+' cleared');
             p.hp=Math.min(p.maxHp,p.hp+Math.floor(p.maxHp/4));
-            C2_PARTICLES.emit(p.pos,3,24);
+            C2_PARTICLES_FLAT.emitBurst(p.pos,3,24);
           }
           p.currentTarget=-1;
         }
@@ -2035,7 +2087,9 @@ const C3_RENDER={
     c.camOffset.x=Math.sin(camYaw)*Math.cos(C3_CAMERA.pitch)*C3_CAMERA.dist;
     c.camOffset.y=Math.sin(-C3_CAMERA.pitch)*C3_CAMERA.dist+C1.CAMERA_HEIGHT;
     c.camOffset.z=Math.cos(camYaw)*Math.cos(C3_CAMERA.pitch)*C3_CAMERA.dist;
-    C2_MATH_OUT.addOut(p.pos,c.camOffset,c.camPos);
+    c.camPos.x=p.pos.x+c.camOffset.x;
+    c.camPos.y=p.pos.y+c.camOffset.y;
+    c.camPos.z=p.pos.z+c.camOffset.z;
     c.camTarget.x=p.pos.x;
     c.camTarget.y=p.pos.y+1;
     c.camTarget.z=p.pos.z;
@@ -2158,11 +2212,6 @@ const C3_RENDER={
     gl.uniform1i(C2_GL.iUTex,0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindBuffer(gl.ARRAY_BUFFER,this._entityMatrixVBO);
-    for(let r=0;r<4;r++){
-      gl.enableVertexAttribArray(4+r);
-      gl.vertexAttribPointer(4+r,4,gl.FLOAT,false,16*4,r*16);
-      gl.vertexAttribDivisor(4+r,1);
-    }
     for(const g of groups.values()){
       const n=Math.min(g.count,C1.MAX_ENTITIES);
       for(let k=0;k<n;k++){
@@ -2186,10 +2235,6 @@ const C3_RENDER={
       this._instancedDrawCalls++;
       this._instancedEntityCount+=n;
     }
-    for(let r=0;r<4;r++){
-      gl.disableVertexAttribArray(4+r);
-      gl.vertexAttribDivisor(4+r,0);
-    }
     gl.useProgram(C2_GL.program);
   },
   renderParticlesFlat(ctx,scrollX,shakeX,shakeY){
@@ -2197,16 +2242,44 @@ const C3_RENDER={
     const b=C2_PARTICLES_FLAT.buffer;
     const s=C2_PARTICLES_FLAT.STRIDE;
     const f=C2_PARTICLES_FLAT.FIELD_OFFSET;
+    const c=this._renderCache;
+    const view=c.viewMat;
+    const proj=c.projMat;
+    const SW=C1.SCREEN_W;
+    const SH=C1.SCREEN_H;
+    const NEAR=C1.NEAR_PLANE;
+    const usePerspective=view&&proj&&view[15]!==0;
     for(let i=0;i<C1.MAX_PARTICLES;i++){
       const ptr=i*s;
       const life=b[ptr+f.life];
       if(life<=0)continue;
       const maxLife=b[ptr+f.maxLife];
       const alpha=life/maxLife;
-      const sx=Math.round(b[ptr+f.px]-scrollX)+shakeX;
-      const sy=Math.round(b[ptr+f.py])+shakeY;
-      const sz=Math.round(b[ptr+f.pz]);
-      const screenSize=Math.max(1,Math.round(b[ptr+f.size]*(0.5+0.5*alpha)*20));
+      const px=b[ptr+f.px];
+      const py=b[ptr+f.py];
+      const pz=b[ptr+f.pz];
+      let sx,sy,screenSize;
+      if(usePerspective){
+        const vx=view[0]*px+view[4]*py+view[8]*pz+view[12];
+        const vy=view[1]*px+view[5]*py+view[9]*pz+view[13];
+        const vz=view[2]*px+view[6]*py+view[10]*pz+view[14];
+        const vw=view[3]*px+view[7]*py+view[11]*pz+view[15];
+        if(vw<=NEAR*0.01)continue;
+        const cx=proj[0]*vx+proj[4]*vy+proj[8]*vz+proj[12]*vw;
+        const cy=proj[1]*vx+proj[5]*vy+proj[9]*vz+proj[13]*vw;
+        const cw=proj[3]*vx+proj[7]*vy+proj[11]*vz+proj[15]*vw;
+        if(cw<=0)continue;
+        const ndcX=cx/cw;
+        const ndcY=cy/cw;
+        sx=(ndcX*0.5+0.5)*SW+shakeX;
+        sy=(1-(ndcY*0.5+0.5))*SH+shakeY;
+        const depthScale=NEAR/(cw*0.5+NEAR);
+        screenSize=Math.max(1,Math.round(b[ptr+f.size]*(0.5+0.5*alpha)*20*depthScale));
+      }else{
+        sx=Math.round(px-scrollX)+shakeX;
+        sy=Math.round(py)+shakeY;
+        screenSize=Math.max(1,Math.round(b[ptr+f.size]*(0.5+0.5*alpha)*20));
+      }
       const r=Math.min(255,Math.round(b[ptr+f.r]*255*alpha));
       const g=Math.min(255,Math.round(b[ptr+f.g]*255*alpha));
       const bl=Math.min(255,Math.round(b[ptr+f.b]*255*alpha));
@@ -2233,8 +2306,8 @@ const C3_RENDER={
 
 const C3_HUD={
   log:{lines:new Array(C1.DEBUG_LOG_COUNT).fill(''),ages:new Array(C1.DEBUG_LOG_COUNT).fill(0),count:0},
-  _summaryCache:{sig:'',text:''},
-  _statsCache:{sig:'',text:''},
+  _summaryCache:{floor:-1,level:-1,hp:-1,maxHp:-1,nano:-1,maxNano:-1,xp:-1,xpToNext:-1,kills:-1,bossKills:-1,insurances:-1,text:''},
+  _statsCache:{s0:-1,s1:-1,s2:-1,s3:-1,s4:-1,s5:-1,ac:-1,atk:-1,text:''},
   summaryCacheHits:0,
   summaryCacheMisses:0,
   statsCacheHits:0,
@@ -2252,21 +2325,28 @@ const C3_HUD={
     for(let i=0;i<C1.DEBUG_LOG_COUNT;i++)if(this.log.ages[i]>0)this.log.ages[i]-=dt;
   },
   buildSummary(p){
-    const sig=C3_WORLD.world.currentFloor+'|'+p.level+'|'+p.hp+'|'+p.maxHp+'|'+p.nano+'|'+p.maxNano+'|'+p.xp+'|'+p.xpToNext+'|'+C3_PLAYER.totalKills+'|'+C3_PLAYER.bossKills+'|'+p.insurances;
-    if(this._summaryCache.sig===sig){this.summaryCacheHits++;return this._summaryCache.text;}
+    const c=this._summaryCache;
+    const floor=C3_WORLD.world.currentFloor;
+    if(c.floor===floor&&c.level===p.level&&c.hp===p.hp&&c.maxHp===p.maxHp&&c.nano===p.nano&&c.maxNano===p.maxNano&&c.xp===p.xp&&c.xpToNext===p.xpToNext&&c.kills===C3_PLAYER.totalKills&&c.bossKills===C3_PLAYER.bossKills&&c.insurances===p.insurances){
+      this.summaryCacheHits++;
+      return c.text;
+    }
     this.summaryCacheMisses++;
-    const text='FLOOR '+(C3_WORLD.world.currentFloor+1)+'  |  LVL '+p.level+'  |  HP '+p.hp+'/'+p.maxHp+'  |  NANO '+p.nano+'/'+p.maxNano+'  |  XP '+p.xp+'/'+p.xpToNext+'  |  KILLS '+C3_PLAYER.totalKills+'  |  BOSSES '+C3_PLAYER.bossKills+'  |  INSURANCES '+p.insurances;
-    this._summaryCache.sig=sig;
-    this._summaryCache.text=text;
+    const text='FLOOR '+(floor+1)+'  |  LVL '+p.level+'  |  HP '+p.hp+'/'+p.maxHp+'  |  NANO '+p.nano+'/'+p.maxNano+'  |  XP '+p.xp+'/'+p.xpToNext+'  |  KILLS '+C3_PLAYER.totalKills+'  |  BOSSES '+C3_PLAYER.bossKills+'  |  INSURANCES '+p.insurances;
+    c.floor=floor;c.level=p.level;c.hp=p.hp;c.maxHp=p.maxHp;c.nano=p.nano;c.maxNano=p.maxNano;c.xp=p.xp;c.xpToNext=p.xpToNext;c.kills=C3_PLAYER.totalKills;c.bossKills=C3_PLAYER.bossKills;c.insurances=p.insurances;
+    c.text=text;
     return text;
   },
   buildStats(p){
-    const sig=p.stats[0]+'|'+p.stats[1]+'|'+p.stats[2]+'|'+p.stats[3]+'|'+p.stats[4]+'|'+p.stats[5]+'|'+p.armorClass+'|'+p.attackPower;
-    if(this._statsCache.sig===sig){this.statsCacheHits++;return this._statsCache.text;}
+    const c=this._statsCache;
+    if(c.s0===p.stats[0]&&c.s1===p.stats[1]&&c.s2===p.stats[2]&&c.s3===p.stats[3]&&c.s4===p.stats[4]&&c.s5===p.stats[5]&&c.ac===p.armorClass&&c.atk===p.attackPower){
+      this.statsCacheHits++;
+      return c.text;
+    }
     this.statsCacheMisses++;
     const text='STR '+p.stats[0]+'  AGI '+p.stats[1]+'  STA '+p.stats[2]+'  INT '+p.stats[3]+'  SEN '+p.stats[4]+'  PSY '+p.stats[5]+'  |  AC '+p.armorClass+'  ATK '+p.attackPower;
-    this._statsCache.sig=sig;
-    this._statsCache.text=text;
+    c.s0=p.stats[0];c.s1=p.stats[1];c.s2=p.stats[2];c.s3=p.stats[3];c.s4=p.stats[4];c.s5=p.stats[5];c.ac=p.armorClass;c.atk=p.attackPower;
+    c.text=text;
     return text;
   },
   renderText(text,x,y,size,color,centered){
@@ -2596,7 +2676,7 @@ const C3_5_3_FABRICATOR = {
     } else if(slot>=C1.SLOT.HEAD&&slot<=C1.SLOT.FEET){
       const arm=Math.floor(ql*0.58*mult);
       return {armor:arm};
-    } else if(slot===C1.SLOT.EYE_IMPLANT){
+    } else if(slot===C1.SLOT.EYE){
       return {intBonus:Math.floor((ql*0.2)*mult), senBonus:Math.floor((ql*0.15)*mult)};
     } else if(slot===C1.SLOT.NECK||slot===C1.SLOT.EAR){
       return {allRes:Math.floor(ql*0.1*mult)};
@@ -3711,7 +3791,7 @@ const C3_TEST={
     this.assert(weaponImp&&weaponImp.damage>0,'weapon implicit has damage');
     const armorImp=C3_5_3_FABRICATOR.computeImplicit(C1.SLOT.CHEST,50,1.5);
     this.assert(armorImp&&armorImp.armor>0,'armor implicit has armor');
-    const eyeImp=C3_5_3_FABRICATOR.computeImplicit(C1.SLOT.EYE_IMPLANT,50,1.5);
+    const eyeImp=C3_5_3_FABRICATOR.computeImplicit(C1.SLOT.EYE,50,1.5);
     this.assert(eyeImp&&eyeImp.intBonus>0,'eye implant has intBonus');
     const nullImp=C3_5_3_FABRICATOR.computeImplicit(C1.SLOT.WAIST,50,1.5);
     this.eq(nullImp,null,'waist has no implicit');
@@ -4695,12 +4775,12 @@ const C3_TEST={
   },
   testBenchParticles(){
     this.group('BENCH_Particles');
-    C2_PARTICLES.init();
+    C2_PARTICLES_FLAT.init();
     C2_PARTICLES_FLAT.init();
     const iterations=1000;
     const t0=performance.now();
     for(let i=0;i<iterations;i++){
-      C2_PARTICLES.emit({x:0,y:0,z:0},0,1);
+      C2_PARTICLES_FLAT.emitBurst({x:0,y:0,z:0},0,1);
       C2_PARTICLES.update(0.016);
     }
     const poolTime=performance.now()-t0;
@@ -4714,7 +4794,7 @@ const C3_TEST={
     const flatTime=performance.now()-t1;
     this.assert(flatTime<500,'flat particles '+iterations+' iterations <500ms (got '+flatTime+'ms)');
     console.log('BENCH Particles: pool='+poolTime+'ms flat='+flatTime+'ms');
-    C2_PARTICLES.init();
+    C2_PARTICLES_FLAT.init();
     C2_PARTICLES_FLAT.clear();
   },
   testBenchSpatial(){
@@ -4804,14 +4884,14 @@ const C3_TEST={
   },
   testParticleBridge(){
     this.group('PARTICLE_Bridge');
-    C2_PARTICLES.init();
+    C2_PARTICLES_FLAT.init();
     C2_PARTICLES_FLAT.init();
     C2_PARTICLES_FLAT.clear();
-    C2_PARTICLES.emit({x:5,y:5,z:5},0,3);
+    C2_PARTICLES_FLAT.emitBurst({x:5,y:5,z:5},0,3);
     this.eq(C2_PARTICLES_FLAT.activeCount(),3,'emit bridges to flat buffer (3 particles)');
-    C2_PARTICLES.emit({x:0,y:0,z:0},1,5);
+    C2_PARTICLES_FLAT.emitBurst({x:0,y:0,z:0},1,5);
     this.eq(C2_PARTICLES_FLAT.activeCount(),8,'5 more bridged (8 total)');
-    C2_PARTICLES.init();
+    C2_PARTICLES_FLAT.init();
     C2_PARTICLES_FLAT.clear();
   },
   testC3Profile(){
@@ -6522,11 +6602,11 @@ const C3_TEST={
     this.group('PARTICLES_BRIDGE_FLAT');
     C2_PARTICLES_FLAT.init();
     C2_PARTICLES_FLAT.clear();
-    C2_PARTICLES.emit({x:5,y:5,z:5},0,3);
+    C2_PARTICLES_FLAT.emitBurst({x:5,y:5,z:5},0,3);
     this.eq(C2_PARTICLES_FLAT.activeCount(),3,'3 particles bridged');
-    C2_PARTICLES.emit({x:0,y:0,z:0},1,5);
+    C2_PARTICLES_FLAT.emitBurst({x:0,y:0,z:0},1,5);
     this.eq(C2_PARTICLES_FLAT.activeCount(),8,'5 more bridged');
-    C2_PARTICLES.clear();
+    C2_PARTICLES_FLAT.clear();
     this.eq(C2_PARTICLES_FLAT.activeCount(),0,'clear clears flat');
   },
   testParticlesUpdateIsNoOp(){
@@ -9771,10 +9851,15 @@ const C3_LOOT={
   },
   init(){
     this.inventory=[];
+    C3_SCHEMA.init();
+    if(C3_SCHEMA.loaded){
+      this.prefixes=C3_SCHEMA.prefixes.map(p=>p.name);
+      this.suffixes=C3_SCHEMA.suffixes.map(s=>s.name);
+      this.rarities=C3_SCHEMA.rarities.map(r=>({...r,color:r.color?r.color.slice():[0.8,0.8,0.8]}));
+    }
     C3_5_1_RARITY.initBase(this.rarities);
     C3_5_4_VAULT.init(this.inventory);
     this._heapDirty=true;
-    C3_5_10_TEST.runAll();
   },
   _scorer(){
     const prof=(C3_PLAYER.getEntity&&C3_PLAYER.getEntity())?C3_PLAYER.getEntity().profession:0;
@@ -9823,7 +9908,7 @@ const C3_LOOT={
       baseItem.damageType=dmgTypes[Math.floor(C2_RNG.chance()*dmgTypes.length)];
     } else if(slot>=C1.SLOT.HEAD&&slot<=C1.SLOT.FEET){
       if(!baseItem.armor) baseItem.armor=Math.floor(baseItem.ql*0.5*rarity.multiplier);
-    } else if(slot===C1.SLOT.EYE_IMPLANT){
+    } else if(slot===C1.SLOT.EYE){
       baseItem.statBonus[3]+=Math.floor((baseItem.ql/50*rarity.multiplier)*2);
       baseItem.statBonus[4]+=Math.floor((baseItem.ql/50*rarity.multiplier)*1);
     }
@@ -9929,6 +10014,7 @@ const C3_LOOT={
     for(const old of extra) this.inventory.push(old);
     const scorer=(it)=>C3_5_5_OPTIMIZER.score(it, prof);
     C3_5_4_VAULT.sortByScoreDesc(this.inventory, scorer);
+    this._invalidateHeap();
     return swaps;
   },
   scoreItem(item){
@@ -10196,7 +10282,7 @@ const C3_NANO={
         let dmg=nano.power+C2_RNG.rangeInt(0,nano.power/4);
         t.hp-=dmg;
         C3_HUD.logPush(nano.name+' hits for '+dmg);
-        C2_PARTICLES.emit(t.pos,2,8);
+        C2_PARTICLES_FLAT.emitBurst(t.pos,2,8);
         C2_AUDIO.shoot();
         if(t.hp<=0){
           C3_WORLD.killEntity(caster.currentTarget);
@@ -10226,7 +10312,7 @@ const C3_NANO={
         const heal=nano.power;
         caster.hp=Math.min(caster.maxHp,caster.hp+heal);
         C3_HUD.logPush(nano.name+' heals '+heal);
-        C2_PARTICLES.emit(caster.pos,2,8);
+        C2_PARTICLES_FLAT.emitBurst(caster.pos,2,8);
       }
     }else if(nano.school===1){
       caster.buffs.push({nanoId:1,name:nano.name,timeLeft:nano.duration,duration:nano.duration,power:nano.power,school:nano.school,hostile:false});
@@ -10293,6 +10379,7 @@ const C3_SAVE={
         bossKills:C3_PLAYER.bossKills,
         bestFloor:C3_PLAYER.bestFloor,
         playTime:C3_PLAYER.playTime,
+        unlocked:C3_ACHIEVE.getUnlockedList(),
         timestamp:Date.now()
       };
       localStorage.setItem(this.KEY,JSON.stringify(data));
@@ -10326,6 +10413,7 @@ const C3_SAVE={
       C3_PLAYER.bossKills=data.bossKills;
       C3_PLAYER.bestFloor=data.bestFloor;
       C3_PLAYER.playTime=data.playTime;
+      C3_ACHIEVE.init(data.unlocked);
       C3_WORLD.world.currentFloor=data.floor;
       C3_WORLD.spawnFloorMobs(C3_WORLD.world.currentFloor);
       C3_HUD.logPush('Save loaded and validated successfully');
@@ -10643,14 +10731,14 @@ const C3_BOSS={
     if(d<t.radius){
       p.hp-=t.damage;
       C3_HUD.logPush('Boss AoE hits you for '+t.damage);
-      C2_PARTICLES.emit(p.pos,1,12);
+      C2_PARTICLES_FLAT.emitBurst(p.pos,1,12);
       C2_AUDIO.hit();
       if(p.hp<=0){
         p.hp=0;p.alive=false;p.insurances--;
         C3_RUNTIME.state=C1.STATE.DEAD;
       }
     }
-    C2_PARTICLES.emit(t.pos,2,16);
+    C2_PARTICLES_FLAT.emitBurst(t.pos,2,16);
   },
   spawnAdd(boss,floor){
     const pos={x:boss.pos.x+C2_RNG.range(-4,4),y:boss.pos.y,z:boss.pos.z+C2_RNG.range(-4,4)};
@@ -10701,7 +10789,7 @@ const C3_BOSS={
       boss.attackPower*=1.5;
       boss.attackInterval*=0.7;
       C3_HUD.logPush('Leet Pack Leader enters RAGE!');
-      C2_PARTICLES.emit(boss.pos,3,24);
+      C2_PARTICLES_FLAT.emitBurst(boss.pos,3,24);
     }
   },
   scriptNotumMutant(boss,dt,floor){
@@ -10841,7 +10929,7 @@ const C3_CRAFT={
       C3_HUD.logPush('Crafted item auto-equipped!');
     }
     C3_HUD.logPush('Crafted: '+crafted.name);
-    C2_PARTICLES.emit(p.pos,3,20);
+    C2_PARTICLES_FLAT.emitBurst(p.pos,3,20);
     C2_AUDIO.levelUp();
     C3_ACHIEVE.progress('craft',1);
     return crafted;
@@ -10901,9 +10989,19 @@ const C3_ACHIEVE={
   progress:{kills:0,bossKills:0,floor:0,level:1,lootCollected:0,rareDrops:0,epicDrops:0,legendaryDrops:0,mythicDrops:0,craft:0,insuranceLost:0,playTime:0},
   unlocked:{},
   notifications:[],
-  init(){
+  init(savedUnlocked){
     for(const a of this.achievements)this.unlocked[a.id]=false;
+    if(savedUnlocked&&typeof savedUnlocked==='object'){
+      for(const a of this.achievements){
+        if(savedUnlocked[a.id]===true)this.unlocked[a.id]=true;
+      }
+    }
     this.notifications=[];
+  },
+  getUnlockedList(){
+    const list={};
+    for(const a of this.achievements)list[a.id]=!!this.unlocked[a.id];
+    return list;
   },
   progress(counter,amount){
     if(!this.progress[counter])this.progress[counter]=0;
@@ -10914,7 +11012,7 @@ const C3_ACHIEVE={
         this.unlocked[a.id]=true;
         this.notifications.push({text:'ACHIEVEMENT: '+a.name,sub:a.desc,time:5.0,maxTime:5.0});
         C2_AUDIO.levelUp();
-        C2_PARTICLES.emit(C3_PLAYER.getEntity().pos,3,30);
+        C2_PARTICLES_FLAT.emitBurst(C3_PLAYER.getEntity().pos,3,30);
       }
     }
   },
@@ -10997,8 +11095,8 @@ const C3_FX={
   },
   triggerTeleport(fromPos,toPos){
     this.teleportEffect={from:{...fromPos},to:{...toPos},time:1.0};
-    C2_PARTICLES.emit(fromPos,3,20);
-    C2_PARTICLES.emit(toPos,3,20);
+    C2_PARTICLES_FLAT.emitBurst(fromPos,3,20);
+    C2_PARTICLES_FLAT.emitBurst(toPos,3,20);
   },
   update(dt){
     const p=C3_PLAYER.getEntity();
@@ -11039,7 +11137,7 @@ let g_selectedRace=0,g_selectedProfession=0,g_charCreateCursor=0;
 
 const C3_UI_QUEUE={
   commands:[],
-  maxCommands:2000,
+  maxCommands:8000,
   clear(){this.commands.length=0;},
   text(t,x,y,size,color,align){
     if(this.commands.length>=this.maxCommands)return;
@@ -11776,11 +11874,23 @@ const C3_ORCH={
     if(C2_GL.ps)C3_GPU_TEARDOWN.trackShader(C2_GL.ps);
     if(C2_GL.tvs)C3_GPU_TEARDOWN.trackShader(C2_GL.tvs);
     if(C2_GL.tps)C3_GPU_TEARDOWN.trackShader(C2_GL.tps);
+    {
+      const instVBO=C1.gl?C1.gl.createBuffer():null;
+      if(instVBO){
+        C1.gl.bindBuffer(C1.gl.ARRAY_BUFFER,instVBO);
+        C1.gl.bufferData(C1.gl.ARRAY_BUFFER,C1.MAX_ENTITIES*16*4,C1.gl.DYNAMIC_DRAW);
+        C1.gl.bindBuffer(C1.gl.ARRAY_BUFFER,null);
+        C3_GPU_TEARDOWN.trackBuffer(instVBO);
+        C2_MESH.setInstanceVBO(instVBO);
+        C3_RENDER._entityMatrixVBO=instVBO;
+        C3_RENDER._instanceMatrixBuffer=new Float32Array(C1.MAX_ENTITIES*16);
+      }
+    }
     C2_MESH.initAll();
     for(let i=0;i<C1.MESH.COUNT;i++){
       if(C2_MESH.meshes[i]){
-        if(C2_MESH.meshes[i].vb)C3_GPU_TEARDOWN.trackBuffer(C2_MESH.meshes[i].vb);
-        if(C2_MESH.meshes[i].ib)C3_GPU_TEARDOWN.trackBuffer(C2_MESH.meshes[i].ib);
+        if(C2_MESH.meshes[i].vbo)C3_GPU_TEARDOWN.trackBuffer(C2_MESH.meshes[i].vbo);
+        if(C2_MESH.meshes[i].ibo)C3_GPU_TEARDOWN.trackBuffer(C2_MESH.meshes[i].ibo);
         if(C2_MESH.meshes[i].vao)C3_GPU_TEARDOWN.trackVertexArray(C2_MESH.meshes[i].vao);
       }
     }
@@ -11788,10 +11898,9 @@ const C3_ORCH={
     for(let i=0;i<C1.TEX.COUNT;i++){
       if(C2_TEX.textures[i]&&C2_TEX.textures[i].tex)C3_GPU_TEARDOWN.trackTexture(C2_TEX.textures[i].tex);
     }
-    C2_PARTICLES.init();
     C2_PARTICLES_FLAT.init();
     C2_SPATIAL.init();
-    C3_SAVE_ASYNC.init();
+
     C2_WASM_SOA.init();
     C3_ENTITY_SOA.init();
     C3_BATCH_AABB.init();
@@ -11810,6 +11919,9 @@ const C3_ORCH={
     C3_CRAFT.clearSelection();
     C3_WORLD.world.entities[0]=C3_PLAYER.getEntity();
     C3_HUD.logPush('Welcome to Anarchy Tower');
+    const rngSeedBefore=C2_RNG.state;
+    const invBefore=C3_LOOT.inventory.slice();
+    const floorBefore=C3_WORLD.world.currentFloor;
     try{
       C3_TEST.runAll();
       C3_TEST.visible=true;
@@ -11841,6 +11953,12 @@ const C3_ORCH={
       console.error('Test suite error:',e);
       C3_HUD.logPush('Test error: '+e.message);
     }
+    C2_RNG.seed((Date.now())>>>0);
+    C3_LOOT.inventory.length=0;
+    C3_LOOT._invalidateHeap();
+    C3_WORLD.world.currentFloor=floorBefore;
+    C3_WORLD.world.entities[0]=C3_PLAYER.getEntity();
+    C3_PLAYER.getEntity().spiralTheta=0;
     if(C3_SAVE.hasSave()){
       const meta=C3_SAVE.loadMeta();
       if(meta)C3_HUD.logPush('Save found: Floor '+(meta.floor+1)+' LVL '+meta.level+' - press C to continue');
@@ -11951,8 +12069,6 @@ const C3_ORCH={
       }
       if(C2_INPUT.isPressed('U'.charCodeAt(0)))C3_CRAFT.clearSelection();
       C3_WORLD.update(dt);
-      C2_WASM_SOA.markDirty();
-      C3_ENTITY_SOA.markDirty();
       C3_ENTITY_SOA.syncFromEntities();
       C2_WASM_SOA.markDirty();
       C3_PLAYER.combatUpdate(dt);
@@ -11962,7 +12078,7 @@ const C3_ORCH={
       C3_ACHIEVE.update(dt);
       C2_PARTICLES_FLAT.update(dt);
       C3_SAVE.update(dt);
-      C3_SAVE_ASYNC.update(dt);
+
       C3_ACHIEVE.setMax('floor',C3_WORLD.world.currentFloor+1);
       C3_ACHIEVE.setMax('level',C3_PLAYER.getEntity().level);
       C3_PLAYER.playTime+=dt;
