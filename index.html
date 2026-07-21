@@ -11391,9 +11391,14 @@ const C3_ORCH={
     const DEV=(typeof location!=='undefined'&&location.hash.indexOf('dev')>=0)||
               (typeof localStorage!=='undefined'&&localStorage.getItem('at_dev')==='1');
     if(DEV){
-      C3_TEST.runAll();
-      C3_TEST.visible=true;
-      C3_HUD.logPush('Tests: '+C3_TEST.passed+' passed, '+C3_TEST.failed+' failed  [F11 rerun, F12 toggle]');
+      try{
+        C3_TEST.runAll();
+        C3_TEST.visible=true;
+        C3_HUD.logPush('Tests: '+C3_TEST.passed+' passed, '+C3_TEST.failed+' failed  [F11 rerun, F12 toggle]');
+      }catch(e){
+        console.error('Test suite error:',e);
+        C3_HUD.logPush('Test error: '+e.message);
+      }
     }else{
       C3_HUD.logPush('[F11] Run tests  [F12] Toggle test panel  [#dev in URL for autotest]');
     }
@@ -11555,6 +11560,7 @@ const C3_ORCH={
   render(){
     C3_PROFILE.beginRender();
     const gl=C1.gl;
+    if(!gl||!this.hudCtx){C3_PROFILE.endRender();C3_PROFILE.endFrame();return;}
     gl.clearColor(0.02,0.02,0.05,1);
     gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     if(C3_RUNTIME.state===C1.STATE.PLAYING||C3_RUNTIME.state===C1.STATE.DEAD){
@@ -11601,13 +11607,15 @@ const C3_ORCH={
       gl.pixelStorei(gl.UNPACK_ROW_LENGTH,C1.SCREEN_W);
       gl.pixelStorei(gl.UNPACK_SKIP_PIXELS,r.x);
       gl.pixelStorei(gl.UNPACK_SKIP_ROWS,r.y);
-      gl.texSubImage2D(gl.TEXTURE_2D,0,r.x,r.y,r.w,r.h,gl.RGBA,gl.UNSIGNED_BYTE,this.hudCanvas);
-      gl.pixelStorei(gl.UNPACK_SKIP_PIXELS,0);
-      gl.pixelStorei(gl.UNPACK_SKIP_ROWS,0);
-      gl.pixelStorei(gl.UNPACK_ROW_LENGTH,0);
+      gl.texSubImage2D(gl.TEXTURE_2D,0,r.x,r.y,gl.RGBA,gl.UNSIGNED_BYTE,this.hudCanvas);
     }catch(e){
-      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.hudCanvas);
+      try{
+        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.hudCanvas);
+      }catch(e2){}
     }
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS,0);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS,0);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH,0);
     this.hudDirtyRect=null;
     gl.uniform1i(C2_GL.uTextTex,0);
     gl.uniform4f(C2_GL.uTextColor,1,1,1,1);
@@ -11621,29 +11629,38 @@ const C3_ORCH={
 
 const GAME_LOOP_MAX_STEPS=5;
 function gameLoop(now){
-  if(!C3_RUNTIME.lastFrameTime)C3_RUNTIME.resetFrame(now);
-  let elapsed=C3_RUNTIME.advanceFrame(now);
-  if(elapsed>0.1){
-    elapsed=0.1;
-    C3_RUNTIME.deltaTime=0.1;
-    C3_RUNTIME.lastFrameTime=now;
+  try{
+    if(!C3_RUNTIME.lastFrameTime)C3_RUNTIME.resetFrame(now);
+    let elapsed=C3_RUNTIME.advanceFrame(now);
+    if(elapsed>0.1){
+      elapsed=0.1;
+      C3_RUNTIME.deltaTime=0.1;
+      C3_RUNTIME.lastFrameTime=now;
+    }
+    let steps=0;
+    while(C3_RUNTIME.canStep()&&steps<GAME_LOOP_MAX_STEPS){
+      C3_ORCH.update(C1.FRAME_TIME);
+      C3_RUNTIME.consumeFrame();
+      steps++;
+    }
+    if(steps>=GAME_LOOP_MAX_STEPS)C3_RUNTIME.accumulator=0;
+    C3_ORCH.render();
+  }catch(e){
+    console.error('Frame error:',e);
   }
-  let steps=0;
-  while(C3_RUNTIME.canStep()&&steps<GAME_LOOP_MAX_STEPS){
-    C3_ORCH.update(C1.FRAME_TIME);
-    C3_RUNTIME.consumeFrame();
-    steps++;
-  }
-  if(steps>=GAME_LOOP_MAX_STEPS)C3_RUNTIME.accumulator=0;
-  C3_ORCH.render();
   requestAnimationFrame(gameLoop);
 }
 
 window.addEventListener('load',async()=>{
-  initWasm();
-  document.addEventListener('click',()=>C2_AUDIO.resume());
-  document.addEventListener('keydown',()=>C2_AUDIO.resume());
-  C3_ORCH.init();
+  try{
+    initWasm();
+    document.addEventListener('click',()=>C2_AUDIO.resume());
+    document.addEventListener('keydown',()=>C2_AUDIO.resume());
+    C3_ORCH.init();
+  }catch(e){
+    console.error('Boot error:',e);
+    if(typeof C3_HUD!=='undefined'&&C3_HUD.logPush)C3_HUD.logPush('Boot error: '+e.message);
+  }
   requestAnimationFrame(gameLoop);
 });
 </script>
